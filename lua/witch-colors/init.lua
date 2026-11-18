@@ -2,10 +2,10 @@ local M = {}
 
 --- @param opts table?
 function M.setup(opts)
-    local Config = require("witch-colors.config")
-    local Core = require("witch-colors.core")
-    Config.override(opts)
-    Core.setup()
+    if opts then
+        require("witch-colors.config").override(opts)
+    end
+    require("witch-colors.core").enable()
 end
 
 return M

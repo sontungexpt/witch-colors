@@ -7,17 +7,24 @@ local api, fn = vim.api, vim.fn
 
 local M = {}
 
-local Config = require("witch-colors.config")
-
-local Renderer
-Renderer = setmetatable({}, {
+--- Lazy load renderer module
+local Renderer = {}
+setmetatable(Renderer, {
     __index = function(t, k)
         Renderer = require("witch-colors.renderer")
         return Renderer[k]
     end,
 })
 
+local Config = require("witch-colors.config")
+local is_excluded = Config.is_excluded
 local config = Config.current
+
+local active = false
+local augroup
+
+
+local DEBOUNCE_MS = 30
 
 
 --- Resolve missing parser fields from a lazily loaded module.
@@ -30,10 +37,14 @@ local config = Config.current
 --- @return any
 local function lazy_parser_index(parser, key)
     local path = parser.path
-    --- Recheck to ensure the path is still existing.
+    --- Recheck to ensure the path is still existing to avoid user change this value after the parser is loaded.
     if not path then return nil end
 
     local module = require(path)
+
+    if not module then
+        return nil
+    end
 
     --- Update the metatable to let the parser resolve lazy fields directly from the module.
     local mt = getmetatable(parser)
@@ -91,14 +102,47 @@ local function enabled_parsers(bufnr)
     return result, count
 end
 
-local DEBOUNCE_MS = 30
 
-local active = false
-local pending = {} --- @type table<integer, boolean>
+--- Finds all non-empty matches of the given Lua patterns in `str`.
+--- @param str string
+--- @param patterns string[]
+--- @return witch-colors.PatternMatch[] matches
+--- @return integer count
+local function collect_matches(str, patterns)
+    local matches, count = {}, 0
+    local str_len = #str
 
--- ============================================================================
--- Mark normalization
--- ============================================================================
+    if str_len == 0 then
+        return matches, count
+    end
+
+    for i = 1, #patterns do
+        local pattern = patterns[i]
+        local init = 1
+
+        while init <= str_len + 1 do
+            local s, e = str_find(str, pattern, init)
+            if not s then break end
+
+            if e >= s then
+                count = count + 1
+
+                matches[count] = {
+                    col_start = s - 1,
+                    col_end = e,
+                    value = str_sub(str, s, e),
+                    pattern = pattern,
+                }
+
+                init = e + 1
+            else
+                init = s + 1
+            end
+        end
+    end
+
+    return matches, count
+end
 
 --- Normalize a drawer mark in place.
 ---
@@ -139,94 +183,12 @@ local function normalize_decoration(mark, row)
     return mark
 end
 
--- ============================================================================
--- Match collection
--- ============================================================================
-
---- Finds all non-empty matches of the given Lua patterns in `str`.
----
---- @param str string
---- @param patterns string[]
---- @return witch-colors.PatternMatch[] matches
---- @return integer count
-local function find_matches(str, patterns)
-    local matches, count = {}, 0
-    local str_len = #str
-
-    if str_len == 0 then
-        return matches, count
-    end
-
-    for i = 1, #patterns do
-        local pattern = patterns[i]
-        local init = 1
-
-        while init <= str_len + 1 do
-            local s, e = str_find(str, pattern, init)
-            if not s then break end
-
-            if e >= s then
-                count = count + 1
-
-                matches[count] = {
-                    col_start = s - 1,
-                    col_end = e,
-                    value = str_sub(str, s, e),
-                    pattern = pattern,
-                }
-
-                init = e + 1
-            else
-                init = s + 1
-            end
-        end
-    end
-
-    return matches, count
-end
-
--- ============================================================================
--- Window
--- ============================================================================
-
---- Get the visible buffer rows of a window.
----
---- Both returned values are 0-based:
----   first: inclusive
----   last: exclusive
----
---- @param win integer
---- @param bufnr integer
---- @return integer|nil first
---- @return integer|nil last
-local function view_range(win, bufnr)
-    local info = fn.getwininfo(win)[1]
-    if not info then return nil end
-
-    local line_count = api.nvim_buf_line_count(bufnr)
-    local first = math.max(info.topline - 1, 0)
-    local last = math.min(info.botline, line_count)
-
-    if first >= last then return nil end
-
-    return first, last
-end
-
--- ============================================================================
--- Sources
--- ============================================================================
-
-
--- ============================================================================
--- Rendering
--- ============================================================================
 
 --- Render decorations within a buffer range.
----
 --- @param bufnr integer
 --- @param first_row integer 0-based inclusive
 --- @param last_row integer 0-based exclusive
-local function render_range(bufnr, first_row, last_row)
+local function render_buf_range(bufnr, first_row, last_row)
     local active_parsers, parser_count = enabled_parsers(bufnr)
     if parser_count == 0 then return end
 
@@ -264,7 +226,7 @@ local function render_range(bufnr, first_row, last_row)
             local patterns = parser.patterns
 
             if patterns and next(patterns) then
-                local matches, match_count = find_matches(line, patterns)
+                local matches, match_count = collect_matches(line, patterns)
                 local resolve = parser.resolve
 
                 for k = 1, match_count do
@@ -295,8 +257,26 @@ local function render_range(bufnr, first_row, last_row)
     end
 end
 
+--- Get the visible buffer rows of a window.
+--- @param win integer
+--- @param bufnr integer
+--- @return integer|nil first 0-based inclusive
+--- @return integer|nil last 0-based exclusive
+local function view_range(win, bufnr)
+    local info = fn.getwininfo(win)[1]
+    if not info then return nil end
+
+    local line_count = api.nvim_buf_line_count(bufnr)
+    local first = math.max(info.topline - 1, 0)
+    local last = math.min(info.botline, line_count)
+
+    if first >= last then return nil end
+
+    return first, last
+end
+
+
 --- Render the visible rows of a window.
----
 --- @param win integer
 local function render_viewport(win)
     if not active or not api.nvim_win_is_valid(win) then
@@ -304,7 +284,7 @@ local function render_viewport(win)
     end
 
     local bufnr = api.nvim_win_get_buf(win)
-    if not api.nvim_buf_is_loaded(bufnr) or Config.is_excluded(bufnr) then
+    if not api.nvim_buf_is_loaded(bufnr) or is_excluded(bufnr) then
         return
     end
 
@@ -312,17 +292,13 @@ local function render_viewport(win)
     if not first_row then return end
     --- @cast last_row integer
 
-    render_range(bufnr, first_row, last_row)
+    render_buf_range(bufnr, first_row, last_row)
 end
 
--- ============================================================================
--- Scheduling
--- ============================================================================
+local pending = {} --- @type table<integer, boolean>
 
---- Coalesce rapid-fire events into one render per window.
---- @param win integer
-local function schedule_window(win)
-    if pending[win] then return end
+local function schedule_render(win)
+    if not active or pending[win] then return end
 
     pending[win] = true
 
@@ -336,12 +312,18 @@ end
 -- Public API
 -- ============================================================================
 
-function M.setup()
+--- Enable automatic rendering.
+---
+--- Registers autocmds and renders the current viewport.
+--- Calling this function multiple times has no additional effect.
+function M.enable()
     if active then return end
 
     active = true
 
-    local group = api.nvim_create_augroup("witch-colors", { clear = true })
+    augroup = api.nvim_create_augroup("witch-colors", {
+        clear = true,
+    })
 
     api.nvim_create_autocmd({
         "TextChanged",
@@ -351,30 +333,29 @@ function M.setup()
         "WinScrolled",
         "WinResized",
     }, {
-        group = group,
+        group = augroup,
         callback = function()
-            schedule_window(api.nvim_get_current_win())
+            schedule_render(api.nvim_get_current_win())
         end,
     })
 
     render_viewport(api.nvim_get_current_win())
 end
 
---- Re-render a window immediately.
---- @param win? integer
-function M.refresh(win)
-    render_viewport(win or api.nvim_get_current_win())
-end
-
---- Enable rendering.
-function M.enable()
-    active = true
-    render_viewport(api.nvim_get_current_win())
-end
-
---- Disable rendering and clear every highlight.
+--- Disable automatic rendering and clear every highlight.
+---
+--- Removes registered autocmds and invalidates pending render requests.
+--- Calling this function multiple times has no additional effect.
 function M.disable()
+    if not active then return end
+
     active = false
+
+    if augroup then
+        augroup = api.nvim_del_augroup_by_id(augroup)
+    end
+
+    pending = {}
 
     if not Renderer then return end
 
@@ -383,6 +364,13 @@ function M.disable()
             Renderer.clear(buf)
         end
     end
+end
+
+--- Re-render a window immediately.
+---
+--- @param win? integer
+function M.refresh(win)
+    render_viewport(win or api.nvim_get_current_win())
 end
 
 return M

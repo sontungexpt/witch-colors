@@ -1,8 +1,7 @@
 local type, pairs                = type, pairs
 local vim                        = vim
-local bo                         = vim.bo
+local b, bo                      = vim.b, vim.bo
 local islist                     = vim.islist
-local nvim_buf_is_valid          = vim.api.nvim_buf_is_valid
 local list_contains              = vim.list_contains
 
 
@@ -197,12 +196,7 @@ end
 --- @param bufnr integer Buffer handle.
 --- @return boolean
 M.is_excluded = function(bufnr)
-    if not nvim_buf_is_valid(bufnr) then
-        return true
-    end
-
     local ex = config.excluded
-
     if ex.buftypes and list_contains(ex.buftypes, bo[bufnr].buftype) then
         return true
     end
