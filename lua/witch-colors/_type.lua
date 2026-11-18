@@ -1,0 +1,112 @@
+--- Unsigned 24-bit RGB integer: `0xRRGGBB`.
+--- @alias witch-colors.ColorRGB integer
+--- Marker-prefixed 33-bit ARGB integer: `0x1_AARRGGBB`. compatible with legacy `ColorRGB`
+--- @alias witch-colors.ColorARGBMarked integer|witch-colors.ColorRGB
+--- Hex color string, 24-bit RGB integer, or marker-prefixed ARGB integer.
+--- @alias witch-colors.Color string|witch-colors.ColorRGB|witch-colors.ColorARGBMarked
+--- RGBA channel tuple `{ r, g, b, a }`, each channel an integer in `[0, 255]`.
+--- Alpha is `255` when the source has no alpha.
+--- @alias witch-colors.RGBA [integer, integer, integer, integer]
+
+--- @alias witch-colors.MarkStyle
+--- | 'bg'
+--- | 'fg'
+--- | 'ornament'    # Append a symbol near the color position
+
+--- @class witch-colors.Decoration
+--- @field fg?              witch-colors.Color|"NONE" Foreground color
+--- @field bg?              witch-colors.Color|"NONE" Background color
+--- @field sp?              witch-colors.Color|"NONE" Special/underline color
+--- @field blend?           integer Background blend (0–100)
+--- @field bold?            boolean
+--- @field italic?          boolean
+--- @field underline?       boolean
+--- @field undercurl?       boolean
+--- @field underdouble?     boolean
+--- @field underdotted?     boolean
+--- @field underdashed?     boolean
+--- @field strikethrough?   boolean
+--- @field overline?        boolean
+--- @field reverse?         boolean
+--- @field standout?        boolean
+--- @field nocombine?       boolean
+--- @field dim?             boolean
+--- @field blink?           boolean
+--- @field altfont?         boolean
+--- @field col_start        integer 0-based inclusive byte column
+--- @field col_end          integer 0-based exclusive byte column
+--- @field ornament?        string symbol shape, e.g. `"■"`
+--- @field ornament_side?   "left"|"right"
+
+
+--- @class witch-colors.DecorationWithRow : witch-colors.Decoration
+--- @field row integer 0-based buffer row.
+
+--- @class witch-colors.DecorationWithColor : witch-colors.Decoration
+--- Represents the mark's foreground or background color, depending on
+--- the config style (`"fg"` or `"bg"`). When specified, the mark ignores
+--- both the `fg` and `bg` fields.
+--- @field color?           witch-colors.Color
+
+---@alias witch-colors.ParserName
+---| "hex"              `#RRGGBB` / `#RRGGBBAA` / `0xRRGGBB`
+---| "short_hex"        `#RGB` / `#RGBA`
+---| "rgb"              `rgb()` / `rgba()`
+---| "hsl"              `hsl()` / `hsla()`
+---| "hsl_bare"         Bare HSL values, e.g. `: 0 0% 100%`
+---| "css_named"        CSS named colors, e.g. `red`, `rebeccapurple`
+---| "ansi"             ANSI SGR colors (standard 16-color palette)
+---| "xterm256"         xterm 256-color SGR, e.g. `38;5;Nm`
+---| "truecolor"        24-bit truecolor SGR, e.g. `38;2;R;G;Bm`
+---| "tailwind"         Tailwind CSS color utilities, e.g. `bg-white`
+---| "var_usage"        CSS custom property references, e.g. `var(--name)`
+
+--- @class witch-colors.PatternMatch
+--- @field col_start integer 0-based inclusive start column
+--- @field col_end   integer 0-based exclusive end column
+--- @field value     string matched text
+--- @field pattern   string Lua pattern that produced the match
+
+--- @class witch-colors.Parser
+---
+--- Must be defined in the source configuration, not in the lazily loaded module.
+--- Controls whether the source is active for a buffer.
+--- @field enabled? boolean|fun(bufnr: integer): boolean|nil
+---
+--- Must be declared outside the lazy-loaded module.
+--- Determines processing order; lower values run first.
+--- @field priority? integer
+---
+--- The path to the module that contains the lazy fields.
+--- For example, `path = "witch-colors.parsers.my_parser"` will load `require("witch-colors.parsers.my_parser")`.
+--- Or you can use the path of the module in neovim config directory `path = "core.my_parser"` will load `require("core.my_parser")`.
+--- @field path? string
+---
+--- Parses an entire line into highlight specifications.
+--- Called once per line. Returns nil when no marks are produced.
+--- `row` is a 0-based buffer row.
+--- @field parse? fun(line: string, row: integer): witch-colors.DecorationWithColor[]|nil
+---
+--- Lua patterns used to find candidate color values in each line.
+--- @field patterns? string[]
+---
+--- Resolves a pattern match into a highlight specification.
+--- Called once per match. Returns nil if the value cannot be resolved.
+--- `row` is a 0-based buffer row.
+--- @field resolve? fun(match: witch-colors.PatternMatch, row: integer): witch-colors.DecorationWithColor|nil
+
+--- Buffer exclusion rules. Any matching rule excludes the entire buffer.
+--- @class witch-colors.Config.Excluded
+--- @field filetypes string[]                           e.g. `{ "NvimTree" }`
+--- @field buftypes  string[]                           e.g. `{ "terminal" }`
+--- @field buffer    (fun(bufnr: integer): boolean)|nil custom exclusion predicate
+
+--- @class witch-colors.Config.Ornament
+--- @field text  string
+--- @field side  "left" | "right"
+
+--- @class witch-colors.Config
+--- @field style    witch-colors.MarkStyle
+--- @field ornament  witch-colors.Config.Ornament
+--- @field excluded witch-colors.Config.Excluded
+--- @field parsers  table<witch-colors.ParserName, witch-colors.Parser>
