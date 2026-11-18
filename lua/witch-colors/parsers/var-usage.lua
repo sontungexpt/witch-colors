@@ -46,11 +46,7 @@ local PALETTE = require("witch-colors.palette.css")
 
 local VAR_USAGE_PATTERN = "var%(%s*%-%-[%w_-]+%s*%)"
 
-local SPACE = 32
-local TAB = 9
-local LF = 10
-local CR = 13
-local FF = 12
+local util = require("witch-colors.parsers.shared.util")
 
 local PLUS = 43
 local MINUS = 45
@@ -77,16 +73,6 @@ local BACKSLASH = 92
 
 ---@param byte integer|nil
 ---@return boolean
-local function is_space(byte)
-    return byte == SPACE
-        or byte == TAB
-        or byte == LF
-        or byte == CR
-        or byte == FF
-end
-
----@param byte integer|nil
----@return boolean
 local function is_digit(byte)
     return byte ~= nil and byte >= ZERO and byte <= NINE
 end
@@ -105,19 +91,6 @@ end
 ---@return string
 local function trim(value)
     return str_match(value, "^%s*(.-)%s*$") or ""
-end
-
----@param value string
----@param pos integer
----@return integer
-local function skip_space(value, pos)
-    local len = #value
-
-    while pos <= len and is_space(str_byte(value, pos)) do
-        pos = pos + 1
-    end
-
-    return pos
 end
 
 ---@param value string
@@ -343,7 +316,7 @@ local function split_arguments(body)
     while pos <= len do
         local byte = str_byte(body, pos)
 
-        if byte == COMMA or byte == SLASH or is_space(byte) then
+        if byte == COMMA or byte == SLASH or util.is_space(byte) then
             local token = trim(str_sub(body, start, pos - 1))
 
             if token ~= "" then
@@ -359,7 +332,7 @@ local function split_arguments(body)
             pos = pos + 1
 
             if byte ~= COMMA and byte ~= SLASH then
-                pos = skip_space(body, pos)
+                pos = util.skip_space(body, pos)
             end
 
             start = pos
@@ -681,7 +654,7 @@ local function find_declaration(text, var_name, search_pos)
             local valid_start = true
 
             for i = segment_start, pos - 1 do
-                if not is_space(str_byte(text, i)) then
+                if not util.is_space(str_byte(text, i)) then
                     valid_start = false
                     break
                 end
@@ -691,7 +664,7 @@ local function find_declaration(text, var_name, search_pos)
                 local end_pos = pos + name_len
 
                 if not is_ident(str_byte(text, end_pos)) then
-                    local colon_pos = skip_space(text, end_pos)
+                    local colon_pos = util.skip_space(text, end_pos)
 
                     if str_byte(text, colon_pos) == COLON then
                         return colon_pos + 1

@@ -32,11 +32,7 @@ local rgba_to_marked = converters.rgba_to_marked
 -- Match the complete function name and its balanced parentheses.
 local RGB_PATTERN = "[rR][gG][bB][aA]?%b()"
 
-local SPACE = 32
-local TAB = 9
-local LF = 10
-local CR = 13
-local FF = 12
+local util = require("witch-colors.parsers.shared.util")
 
 local COMMA = 44
 local DOT = 46
@@ -54,32 +50,7 @@ local NINE = 57
 -- Private helpers
 -- ============================================================================
 
----Check whether a byte is CSS whitespace.
----@param byte integer|nil
----@return boolean
-local function is_space(byte)
-    return byte == SPACE
-        or byte == TAB
-        or byte == LF
-        or byte == CR
-        or byte == FF
-end
 
----Skip CSS whitespace.
----@param value string
----@param pos integer
----@return integer next_pos
----@return boolean had_space
-local function skip_space(value, pos)
-    local len = #value
-    local start = pos
-
-    while pos <= len and is_space(str_byte(value, pos)) do
-        pos = pos + 1
-    end
-
-    return pos, pos > start
-end
 
 ---Read one CSS number, optionally followed by `%`.
 ---
@@ -223,13 +194,13 @@ end
 ---@return number|nil b
 ---@return number|nil a
 local function parse_legacy(value, pos, r, r_percentage)
-    pos = skip_space(value, pos)
+    pos = util.skip_space(value, pos)
 
     if str_byte(value, pos) ~= COMMA then
         return nil
     end
 
-    pos = skip_space(value, pos + 1)
+    pos = util.skip_space(value, pos + 1)
 
     local g, g_percentage, next_pos = read_rgb_channel(value, pos)
 
@@ -237,13 +208,13 @@ local function parse_legacy(value, pos, r, r_percentage)
         return nil
     end
 
-    pos = skip_space(value, next_pos)
+    pos = util.skip_space(value, next_pos)
 
     if str_byte(value, pos) ~= COMMA then
         return nil
     end
 
-    pos = skip_space(value, pos + 1)
+    pos = util.skip_space(value, pos + 1)
 
     local b, b_percentage
     b, b_percentage, next_pos = read_rgb_channel(value, pos)
@@ -252,12 +223,12 @@ local function parse_legacy(value, pos, r, r_percentage)
         return nil
     end
 
-    pos = skip_space(value, next_pos)
+    pos = util.skip_space(value, next_pos)
 
     local a
 
     if str_byte(value, pos) == COMMA then
-        pos = skip_space(value, pos + 1)
+        pos = util.skip_space(value, pos + 1)
 
         a, next_pos = read_alpha(value, pos)
 
@@ -265,7 +236,7 @@ local function parse_legacy(value, pos, r, r_percentage)
             return nil
         end
 
-        pos = skip_space(value, next_pos)
+        pos = util.skip_space(value, next_pos)
     end
 
     if pos <= #value then
@@ -297,7 +268,7 @@ local function parse_modern(value, pos, r)
     end
 
     local had_space
-    pos, had_space = skip_space(value, next_pos)
+    pos, had_space = util.skip_space(value, next_pos)
 
     if not had_space then
         return nil
@@ -310,12 +281,12 @@ local function parse_modern(value, pos, r)
         return nil
     end
 
-    pos = skip_space(value, next_pos)
+    pos = util.skip_space(value, next_pos)
 
     local a
 
     if str_byte(value, pos) == SLASH then
-        pos = skip_space(value, pos + 1)
+        pos = util.skip_space(value, pos + 1)
 
         local alpha_next
         a, alpha_next = read_alpha(value, pos)
@@ -324,7 +295,7 @@ local function parse_modern(value, pos, r)
             return nil
         end
 
-        pos = skip_space(value, alpha_next)
+        pos = util.skip_space(value, alpha_next)
     end
 
     if pos <= #value then
@@ -376,7 +347,7 @@ local function parse_rgb(value)
     end
 
     local args = str_sub(value, open_pos + 1, len - 1)
-    local pos = skip_space(args, 1)
+    local pos = util.skip_space(args, 1)
 
     if pos > #args then
         return nil
@@ -388,7 +359,7 @@ local function parse_rgb(value)
         return nil
     end
 
-    local separator_pos, had_space = skip_space(args, next_pos)
+    local separator_pos, had_space = util.skip_space(args, next_pos)
     local separator = str_byte(args, separator_pos)
 
     if separator == COMMA then

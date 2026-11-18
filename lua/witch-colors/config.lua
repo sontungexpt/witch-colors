@@ -116,18 +116,18 @@ local config = {
         },
 
         ansi = {
-            path = "witch-colors.parsers.ansi",
-            enabled = false,
+            path = "witch-colors.parsers.sgr.ansi",
+            enabled = true,
             priority = 7,
         },
         truecolor = {
-            path = "witch-colors.parsers.truecolor",
-            enabled = false,
+            path = "witch-colors.parsers.sgr.truecolor",
+            enabled = true,
             priority = 8,
         },
         xterm256 = {
-            path = "witch-colors.parsers.xterm256",
-            enabled = false,
+            path = "witch-colors.parsers.sgr.xterm256",
+            enabled = true,
             priority = 9,
         },
         tailwind = {

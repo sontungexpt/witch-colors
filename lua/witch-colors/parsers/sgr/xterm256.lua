@@ -20,14 +20,12 @@ local str_byte = string.byte
 local str_find = string.find
 local floor = math.floor
 
-local ESC = "\27"
-local ESC_27 = "\\27"
-local ESC_033 = "\\033"
+local sgr = require("witch-colors.parsers.sgr.util")
 
 local PATTERNS = {
-    ESC .. "%[[%d;]+m",
-    ESC_27 .. "%[[%d;]+m",
-    ESC_033 .. "%[[%d;]+m",
+    sgr.ESC .. "%[[%d;]+m",
+    sgr.ESC_27 .. "%[[%d;]+m",
+    sgr.ESC_033 .. "%[[%d;]+m",
 }
 
 local SEMICOLON = 59
@@ -231,42 +229,7 @@ local function find_indexed_colors(value, index, last)
     return fg, bg
 end
 
---- Find the beginning of the SGR parameters.
----
---- Supports:
----   ESC[
----   \27[
----   \033[
----
---- @param value string
---- @return integer|nil
-local function get_param_start(value)
-    local first = str_byte(value, 1)
 
-    -- Actual ESC character.
-    if first == 27 and str_byte(value, 2) == 91 then
-        return 3
-    end
-
-    -- Literal "\27[".
-    if first == 92
-        and str_byte(value, 2) == 50
-        and str_byte(value, 3) == 55
-        and str_byte(value, 4) == 91
-    then
-        return 5
-    end
-
-    -- Literal "\033[".
-    if first == 92
-        and str_byte(value, 2) == 48
-        and str_byte(value, 3) == 51
-        and str_byte(value, 4) == 51
-        and str_byte(value, 5) == 91
-    then
-        return 6
-    end
-end
 
 --- @type witch-colors.Parser
 return {
@@ -279,7 +242,7 @@ return {
             return nil
         end
 
-        local param_start = get_param_start(value)
+        local param_start = sgr.get_param_start(value)
 
         if param_start == nil then
             return nil

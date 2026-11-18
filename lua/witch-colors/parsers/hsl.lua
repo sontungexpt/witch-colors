@@ -28,6 +28,7 @@ local min, max = math.min, math.max
 local HUGE = math.huge
 
 local hsl_to_marked = require("witch-colors.util.converters").hsl_to_marked
+local util = require("witch-colors.parsers.shared.util")
 
 local HSL_PATTERNS = {
     "[hH][sS][lL]%b()",
@@ -167,17 +168,6 @@ end
 -- Tokenization
 -- ============================================================================
 
---- Check whether a byte represents CSS whitespace.
----@param byte integer
----@return boolean
-local function is_space(byte)
-    return byte == 32
-        or byte == 9
-        or byte == 10
-        or byte == 13
-        or byte == 12
-end
-
 --- Tokenize an HSL function body.
 ---
 --- Separators are preserved to distinguish legacy and modern syntax.
@@ -199,7 +189,7 @@ local function tokenize(body)
 
     while pos <= len do
         -- Skip leading whitespace.
-        while pos <= len and is_space(str_byte(body, pos)) do
+        while pos <= len and util.is_space(str_byte(body, pos)) do
             pos = pos + 1
         end
 
@@ -213,7 +203,7 @@ local function tokenize(body)
         while pos <= len do
             local byte = str_byte(body, pos)
 
-            if is_space(byte) or byte == 44 or byte == 47 then
+            if util.is_space(byte) or byte == 44 or byte == 47 then
                 break
             end
 
@@ -233,7 +223,7 @@ local function tokenize(body)
         -- Consume whitespace.
         local had_space = false
 
-        while pos <= len and is_space(str_byte(body, pos)) do
+        while pos <= len and util.is_space(str_byte(body, pos)) do
             had_space = true
             pos = pos + 1
         end
@@ -259,7 +249,7 @@ local function tokenize(body)
 
         -- Skip whitespace after explicit separators.
         if separator ~= " " then
-            while pos <= len and is_space(str_byte(body, pos)) do
+            while pos <= len and util.is_space(str_byte(body, pos)) do
                 pos = pos + 1
             end
         end

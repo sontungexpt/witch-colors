@@ -39,11 +39,7 @@ local pi = math.pi
 local converters = require("witch-colors.util.converters")
 local hsl_to_marked = converters.hsl_to_marked
 
-local SPACE = 32
-local TAB = 9
-local LF = 10
-local CR = 13
-local FF = 12
+local util = require("witch-colors.parsers.shared.util")
 
 local PLUS = 43
 local MINUS = 45
@@ -58,23 +54,8 @@ local HSL_BARE_PATTERN = "%-%-[%w_-]+%s*:%s*[^;}]+"
 -- Private helpers
 -- ============================================================================
 
-local function is_space(byte)
-	return byte == SPACE or byte == TAB or byte == LF or byte == CR or byte == FF
-end
-
----Skip CSS whitespace.
----@param value string
----@param pos integer
----@return integer
-local function skip_space(value, pos)
-	local len = #value
-
-	while pos <= len and is_space(str_byte(value, pos)) do
-		pos = pos + 1
-	end
-
-	return pos
-end
+local skip_space = util.skip_space
+local is_space = util.is_space
 
 ---Trim trailing CSS whitespace.
 ---@param value string
