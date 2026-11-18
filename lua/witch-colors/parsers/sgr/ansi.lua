@@ -17,14 +17,13 @@
 ---
 --- Unrelated SGR attributes are ignored.
 
-local str_find = string.find
 local str_byte = string.byte
+local sgr = require("witch-colors.parsers.sgr.util")
 
-local ESC = "\27"
-
-local SEMICOLON = 59
-local DIGIT_ZERO = 48
-local DIGIT_NINE = 57
+local SEMICOLON = sgr.SEMICOLON
+local DIGIT_ZERO = sgr.DIGIT_ZERO
+local DIGIT_NINE = sgr.DIGIT_NINE
+local TERMINATOR = sgr.TERMINATOR
 
 -- ANSI color approximations.
 -- Actual RGB values depend on the terminal's configurable palette.
@@ -158,36 +157,29 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = {
-        -- Actual ESC byte.
-        ESC .. "%[[%d;]*m",
+	patterns = sgr.patterns("[%d;]*"),
 
-        -- Literal escape sequences in source code.
-        "\\033%[[%d;]*m",
-        "\\27%[[%d;]*m",
-        "\\x1[bB]%[[%d;]*m",
-        "\\e%[[%d;]*m",
-        "\\u001[bB]%[[%d;]*m",
-    },
+	resolve = function(match)
+		local value = match.value
+		local length = #value
 
-    resolve = function(match)
-        local value = match.value
-        local length = #value
+		if length < 3 or str_byte(value, length) ~= TERMINATOR then
+			return nil
+		end
 
-        -- Find the parameter list after CSI '['.
-        local bracket = str_find(value, "[", 1, true)
-        if bracket == nil then
-            return nil
-        end
+		local param_start = sgr.get_param_start(value)
+		if param_start == nil then
+			return nil
+		end
 
-        local mark = parse_sgr(value, bracket + 1, length - 1)
-        if mark == nil then
-            return nil
-        end
+		local mark = parse_sgr(value, param_start, length - 1)
+		if mark == nil then
+			return nil
+		end
 
-        mark.col_start = match.col_start
-        mark.col_end = match.col_end
+		mark.col_start = match.col_start
+		mark.col_end = match.col_end
 
-        return mark
-    end,
+		return mark
+	end,
 }

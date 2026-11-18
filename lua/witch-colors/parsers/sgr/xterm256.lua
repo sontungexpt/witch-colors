@@ -17,22 +17,14 @@
 --- Unrelated SGR attributes are ignored.
 
 local str_byte = string.byte
-local str_find = string.find
 local floor = math.floor
 
 local sgr = require("witch-colors.parsers.sgr.util")
 
-local PATTERNS = {
-    sgr.ESC .. "%[[%d;]+m",
-    sgr.ESC_27 .. "%[[%d;]+m",
-    sgr.ESC_033 .. "%[[%d;]+m",
-}
-
-local SEMICOLON = 59
-local TERMINATOR = 109
-
-local DIGIT_ZERO = 48
-local DIGIT_NINE = 57
+local SEMICOLON = sgr.SEMICOLON
+local TERMINATOR = sgr.TERMINATOR
+local DIGIT_ZERO = sgr.DIGIT_ZERO
+local DIGIT_NINE = sgr.DIGIT_NINE
 
 -- Standard 16 ANSI colors, stored as 24-bit RGB integers.
 local ANSI_COLORS = {
@@ -233,44 +225,39 @@ end
 
 --- @type witch-colors.Parser
 return {
-    patterns = PATTERNS,
-    resolve = function(match)
-        local value = match.value
-        local len = #value
+	patterns = sgr.patterns("[%d;]+"),
 
-        if len < 4 or str_byte(value, len) ~= TERMINATOR then
-            return nil
-        end
+	resolve = function(match)
+		local value = match.value
+		local len = #value
 
-        local param_start = sgr.get_param_start(value)
+		if len < 4 or str_byte(value, len) ~= TERMINATOR then
+			return nil
+		end
 
-        if param_start == nil then
-            return nil
-        end
+		local param_start = sgr.get_param_start(value)
+		if param_start == nil then
+			return nil
+		end
 
-        local fg_index, bg_index = find_indexed_colors(
-            value,
-            param_start,
-            len - 1
-        )
+		local fg_index, bg_index = find_indexed_colors(value, param_start, len - 1)
+		if fg_index == nil and bg_index == nil then
+			return nil
+		end
 
-        if fg_index == nil and bg_index == nil then
-            return nil
-        end
+		local mark = {
+			col_start = match.col_start,
+			col_end = match.col_end,
+		}
 
-        local mark = {
-            col_start = match.col_start,
-            col_end = match.col_end,
-        }
+		if fg_index ~= nil then
+			mark.fg = xterm256_to_rgb(fg_index)
+		end
 
-        if fg_index ~= nil then
-            mark.fg = xterm256_to_rgb(fg_index)
-        end
+		if bg_index ~= nil then
+			mark.bg = xterm256_to_rgb(bg_index)
+		end
 
-        if bg_index ~= nil then
-            mark.bg = xterm256_to_rgb(bg_index)
-        end
-
-        return mark
-    end,
+		return mark
+	end,
 }

@@ -9,7 +9,7 @@
 ---     `38:2:0:R:G:B` and `48:2:0:R:G:B`.
 ---   - Empty or numeric color-space identifiers.
 ---   - Multiple foreground and background declarations in one sequence.
----   - Actual ESC bytes and literal `\27` / `\033` representations.
+---   - Actual ESC bytes and common literal escape representations.
 ---
 --- RGB channels must be integers in the range 0–255.
 --- The color-space identifier is parsed but not used.
@@ -24,18 +24,11 @@ local str_byte = string.byte
 
 local sgr = require("witch-colors.parsers.sgr.util")
 
-local PATTERNS = {
-    sgr.ESC .. "%[[%d;:]+m",
-    sgr.ESC_27 .. "%[[%d;:]+m",
-    sgr.ESC_033 .. "%[[%d;:]+m",
-}
-
-local SEMICOLON = 59
-local COLON = 58
-local TERMINATOR = 109
-
-local DIGIT_ZERO = 48
-local DIGIT_NINE = 57
+local SEMICOLON = sgr.SEMICOLON
+local COLON = sgr.COLON
+local TERMINATOR = sgr.TERMINATOR
+local DIGIT_ZERO = sgr.DIGIT_ZERO
+local DIGIT_NINE = sgr.DIGIT_NINE
 
 --- Read an unsigned decimal integer.
 ---
@@ -333,41 +326,39 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = PATTERNS,
+	patterns = sgr.patterns("[%d;:]+"),
 
-    resolve = function(match)
-        local value = match.value
-        local len = #value
+	resolve = function(match)
+		local value = match.value
+		local len = #value
 
-        if len < 4 or str_byte(value, len) ~= TERMINATOR then
-            return nil
-        end
+		if len < 4 or str_byte(value, len) ~= TERMINATOR then
+			return nil
+		end
 
-        local param_start = sgr.get_param_start(value)
+		local param_start = sgr.get_param_start(value)
+		if not param_start then
+			return nil
+		end
 
-        if not param_start then
-            return nil
-        end
+		local fg, bg = find_truecolor(value, param_start, len - 1)
+		if fg == nil and bg == nil then
+			return nil
+		end
 
-        local fg, bg = find_truecolor(value, param_start, len - 1)
+		local mark = {
+			col_start = match.col_start,
+			col_end = match.col_end,
+		}
 
-        if fg == nil and bg == nil then
-            return nil
-        end
+		if fg ~= nil then
+			mark.fg = fg
+		end
 
-        local mark = {
-            col_start = match.col_start,
-            col_end = match.col_end,
-        }
+		if bg ~= nil then
+			mark.bg = bg
+		end
 
-        if fg ~= nil then
-            mark.fg = fg
-        end
-
-        if bg ~= nil then
-            mark.bg = bg
-        end
-
-        return mark
-    end,
+		return mark
+	end,
 }
