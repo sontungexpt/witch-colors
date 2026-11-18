@@ -1,5 +1,7 @@
 --- ANSI SGR 16-color source.
 ---
+--- @deprecated Use `witch-colors.parsers.sgr` (unified SGR parser) instead.
+---
 --- Recognizes standard ANSI foreground and background color sequences.
 ---
 --- Supported:

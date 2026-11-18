@@ -1,5 +1,7 @@
 --- xterm 256-color SGR source.
 ---
+--- @deprecated Use `witch-colors.parsers.sgr` (unified SGR parser) instead.
+---
 --- Recognizes indexed foreground and background color declarations.
 ---
 --- Supported:

@@ -120,21 +120,7 @@ local config = {
             enabled = true,
             priority = 7,
         },
-        ansi = {
-            path = "witch-colors.parsers.sgr.ansi",
-            enabled = false,
-            priority = 7,
-        },
-        truecolor = {
-            path = "witch-colors.parsers.sgr.truecolor",
-            enabled = false,
-            priority = 8,
-        },
-        xterm256 = {
-            path = "witch-colors.parsers.sgr.xterm256",
-            enabled = false,
-            priority = 9,
-        },
+
         tailwind = {
             path = "witch-colors.parsers.tailwind",
             enabled = css_script_supported,

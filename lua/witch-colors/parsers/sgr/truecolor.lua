@@ -1,5 +1,7 @@
 --- Truecolor SGR source.
 ---
+--- @deprecated Use `witch-colors.parsers.sgr` (unified SGR parser) instead.
+---
 --- Recognizes 24-bit RGB foreground and background color sequences.
 ---
 --- Supported:
