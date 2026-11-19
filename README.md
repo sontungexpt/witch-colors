@@ -169,6 +169,16 @@ If you need to manually refresh the highlights in the current window:
 require("witch-colors").refresh()
 ```
 
+## Testing
+
+Tests live in `spec/`, separate from the plugin code in `lua/`. Run them from the repository root:
+
+```sh
+busted --config-file=spec/busted.lua spec/
+```
+
+The data-driven parser suite reads its cases from `spec/data/parser_vectors.md`.
+
 ## License
 
 MIT License — Copyright (c) 2026 Breno Prata.

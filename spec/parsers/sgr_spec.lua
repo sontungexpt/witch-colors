@@ -1,7 +1,7 @@
 -- Busted regression suite for the unified SGR parser.
 --
 -- Run from the repository root:
---   busted --directory=lua ./witch-colors/
+--   busted --config-file=spec/busted.lua spec/
 
 local parser = require("witch-colors.parsers.sgr")
 
@@ -265,8 +265,12 @@ it("colon RGB accepts numeric CSID outside channel range", function()
     expect("38:2:9999:12:34:56", 0x0C2238, nil, nil)
 end)
 
-it("legacy colon RGB shorthand is enabled", function()
-    expect("38:2:255:128:64", 0xFF8040, nil, nil)
+it("colon RGB keeps the colour-space slot and defaults missing blue", function()
+    expect("38:2:255:128:64", 0x804000, nil, nil)
+end)
+
+it("colon RGB colour-space slot is not a colour channel", function()
+    expect("38:2:1:2:3", 0x020300, nil, nil)
 end)
 
 it("mixed separator RGB compatibility form", function()
@@ -510,10 +514,6 @@ local invalid_cases = {
     { "38:2::256:0:0", "colon red above 255" },
     { "38:2::0:256:0", "colon green above 255" },
     { "38:2::0:0:256", "colon blue above 255" },
-    { "38:2::", "missing RGB channels" },
-    { "38:2::255:128", "missing blue channel" },
-    { "38:2::255::64", "empty green channel" },
-    { "38:5:", "empty indexed value" },
     { "38;5;", "empty semicolon indexed value" },
     { "38;2;255;128", "missing semicolon blue channel" },
     { "38:5:1:2", "extra indexed field" },
@@ -526,6 +526,36 @@ for _, item in ipairs(invalid_cases) do
         expect_result_nil(params)
     end)
 end
+
+-- ---------------------------------------------------------------------------
+-- ISO/T.416 empty parameter elements default to 0
+-- ---------------------------------------------------------------------------
+
+it("empty RGB channels default to black", function()
+    expect("38:2::", 0x000000, nil, nil)
+end)
+
+it("omitted trailing blue channel defaults to zero", function()
+    expect("38:2::255:128", 0xFF8000, nil, nil)
+end)
+
+it("empty middle channel defaults to zero", function()
+    expect("38:2::255::64", 0xFF0040, nil, nil)
+end)
+
+it("empty indexed value defaults to index zero", function()
+    expect("38:5:", 0x000000, nil, nil)
+end)
+
+it("mode-only colon groups use default components", function()
+    expect("38:2", 0x000000, nil, nil)
+    expect("38:5", 0x000000, nil, nil)
+end)
+
+it("colon mode followed by semicolon does not consume the next SGR", function()
+    expect("38:2;44", 0x000000, 0x0000EE, nil)
+    expect("38:5;44", 0x000000, 0x0000EE, nil)
+end)
 
 it("invalid color declaration preserves earlier foreground", function()
     expect("31;38:2::256:0:0", 0xCD0000, nil, nil)
@@ -546,15 +576,31 @@ it("invalid non-ASCII numeric syntax does not match source pattern", function()
 end)
 
 -- ---------------------------------------------------------------------------
--- Unsupported ISO modes are consumed but not converted by default
+-- ISO CMY/CMYK modes are converted and do not swallow following SGR
 -- ---------------------------------------------------------------------------
 
-it("CMY mode is ignored but does not swallow following SGR", function()
-    expect("31;38:3::0:255:255;44", 0xCD0000, 0x0000EE, nil)
+it("CMY mode is converted and does not swallow following SGR", function()
+    expect("31;38:3::0:255:255;44", 0xFF0000, 0x0000EE, nil)
 end)
 
-it("CMYK mode is ignored but does not swallow following SGR", function()
-    expect("31;38:4::0:255:255:0;44", 0xCD0000, 0x0000EE, nil)
+it("CMYK mode is converted and does not swallow following SGR", function()
+    expect("31;38:4::0:255:255:0;44", 0xFF0000, 0x0000EE, nil)
+end)
+
+it("empty CMY and CMYK components default to zero", function()
+    expect("38:3::", 0xFFFFFF, nil, nil)
+    expect("38:4::", 0xFFFFFF, nil, nil)
+end)
+
+it("CMYK black and white boundaries", function()
+    expect("38:4::0:0:0:255", 0x000000, nil, nil)
+    expect("38:4::0:0:0:0", 0xFFFFFF, nil, nil)
+    expect("38:4::255:255:255:0", 0x000000, nil, nil)
+end)
+
+it("ISO modes 0 and 1 have no additional parameter elements", function()
+    expect("31;38:0:1:2:3;44", 0xCD0000, 0x0000EE, nil)
+    expect("31;38:1:1:2:3;44", 0xCD0000, 0x0000EE, nil)
 end)
 
 it("unknown colon color mode is consumed without creating RGB", function()

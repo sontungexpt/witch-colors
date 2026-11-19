@@ -64,8 +64,11 @@ local config = {
                 -- 0xRRGGBB
                 "%f[%w]0[xX]%x%x%x%x%x%x%f[^%w_-]",
 
-                -- #RRGGBB, #RRGGBBAA
-                "%f[#]#%x%x%x%x%x%x%x?%x?%f[^%w_-]",
+                -- #RRGGBB
+                "%f[#]#%x%x%x%x%x%x%f[^%w_-]",
+
+                -- #RRGGBBAA
+                "%f[#]#%x%x%x%x%x%x%x%x%f[^%w_-]",
             },
             resolve = function(match)
                 local value = match.value

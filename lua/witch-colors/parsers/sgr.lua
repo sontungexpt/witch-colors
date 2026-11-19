@@ -19,22 +19,22 @@
 --   38:2::R:G:B / 48:2::R:G:B
 --   38:2:CSID:R:G:B / 48:2:CSID:R:G:B
 --
--- Compatibility forms:
---   38:2:R:G:B (legacy shorthand)
+-- Compatibility forms (de facto xterm/mixed extensions, not T.416):
 --   38;5:N
+--   38;2;R;G;B
 --   38;2:CSID:R:G:B
 --
--- Optional ISO modes:
---   3 = CMY
---   4 = CMYK
---
--- Color modes:
+-- ISO color modes:
 --   0 = implementation-defined; ignored
 --   1 = transparent; represented as "NONE"
 --   2 = RGB
 --   3 = CMY
 --   4 = CMYK
 --   5 = indexed
+--
+-- Empty parameter elements use the SGR default value (0), and empty elements
+-- at the end of the parameter substring may be omitted (ITU-T T.416 13.1.8).
+-- Therefore `38:2::255:128` is equivalent to `38:2::255:128:0`.
 --
 -- Resets:
 --   0  = fg + bg + sp
@@ -55,7 +55,8 @@ local floor = math.floor
 -- ============================================================================
 
 -- Non-standard colon RGB shorthand: 38:2:R:G:B.
-local ALLOW_LEGACY_COLON_RGB = true
+-- T.416 requires the colour-space field, so this stays disabled.
+local ALLOW_LEGACY_COLON_RGB = false
 
 -- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
 local ALLOW_MIXED_SEPARATORS = true
@@ -64,9 +65,11 @@ local ALLOW_MIXED_SEPARATORS = true
 -- Keep disabled for UTF-8 buffers.
 local ACCEPT_RAW_C1_BYTE = false
 
--- CMY/CMYK conversion assumes 8-bit components and an ordinary CMY/CMYK
--- interpretation. It does not apply profile-specific CSID scaling/offsets.
-local CONVERT_CMY_CMYK = false
+-- T.416 13.1.8 defines modes 3/4 as direct CMY/CMYK colour. The Decoration
+-- stores RGB, so convert those components. This assumes 8-bit components and
+-- an ordinary CMY/CMYK interpretation; profile-specific CSID scaling and
+-- offsets are not applied.
+local CONVERT_CMY_CMYK = true
 
 -- ============================================================================
 -- Constants
@@ -250,6 +253,28 @@ local function read_uint(value, index, last, limit)
 	return n, index
 end
 
+--- Read an unsigned decimal integer, treating an empty field as zero.
+---
+--- ITU-T T.416 13.1.8: "An empty parameter element represents a default
+--- value for this parameter element. Empty parameter elements at the end of
+--- the parameter substring need not be included." For SGR the default is 0.
+---
+--- @param value string
+--- @param index integer
+--- @param last integer
+--- @param limit integer
+--- @return integer|nil result
+--- @return integer next_index
+local function read_uint_or_default(value, index, last, limit)
+	local b = byte(value, index)
+
+	if index > last or b == COLON or b == SEMICOLON then
+		return 0, index
+	end
+
+	return read_uint(value, index, last, limit)
+end
+
 --- Skip consecutive decimal digits without converting them.
 ---
 --- @param value string
@@ -407,7 +432,8 @@ end
 
 --- Read an ISO colon-separated extended-color group.
 ---
---- `index` points at the colon after the mode.
+--- `index` points at the colon after the mode, or at the next top-level
+--- separator/end when the mode has no further parameter elements.
 ---
 --- @param value string
 --- @param index integer
@@ -438,8 +464,9 @@ local function read_colon_fields(value, index, last, mode)
 
 		if mode == 5 then
 			-- Indexed color: exactly one palette field.
+			-- An empty field uses the SGR default index (0).
 			if field_count == 1 then
-				palette_index, index = read_uint(value, index, last, 255)
+				palette_index, index = read_uint_or_default(value, index, last, 255)
 
 				if palette_index == nil then
 					valid = false
@@ -467,7 +494,9 @@ local function read_colon_fields(value, index, last, mode)
 
 			elseif field_count >= 2 and field_count <= required_fields then
 				local channel
-				channel, index = read_uint(value, index, last, 255)
+				-- Empty component fields default to 0; trailing fields may
+				-- be omitted entirely with the same result.
+				channel, index = read_uint_or_default(value, index, last, 255)
 
 				if channel == nil then
 					valid = false
@@ -528,8 +557,8 @@ local function read_colon_fields(value, index, last, mode)
 
 	-- Indexed color.
 	if mode == 5 then
-		if valid and field_count == 1 then
-			return palette_to_rgb(palette_index), index
+		if valid and field_count <= 1 then
+			return palette_to_rgb(palette_index or 0), index
 		end
 
 		return nil, index
@@ -556,13 +585,7 @@ local function read_colon_fields(value, index, last, mode)
 
 	-- RGB.
 	if mode == 2 then
-		-- Standard ISO representation:
-		-- CSID:R:G:B[:PE6[:PE7[:PE8]]]
-		if field_count >= 4 and field_count <= 7 then
-			return pack_rgb(a, b, c), index
-		end
-
-		-- Legacy shorthand:
+		-- Optional non-standard shorthand, disabled by default:
 		-- R:G:B
 		if ALLOW_LEGACY_COLON_RGB and field_count == 3 then
 			if csid_rgb ~= nil and a ~= nil and b ~= nil then
@@ -570,25 +593,24 @@ local function read_colon_fields(value, index, last, mode)
 			end
 		end
 
-		return nil, index
+		-- Standard ISO representation:
+		-- CSID:R:G:B[:PE6[:PE7[:PE8]]]
+		-- Empty and omitted trailing components default to 0.
+		return pack_rgb(a or 0, b or 0, c or 0), index
 	end
 
 	-- CMY.
 	if mode == 3 then
-		if CONVERT_CMY_CMYK and field_count >= 4 and field_count <= 7 then
-			return direct_color(mode, a, b, c), index
-		end
-
-		return nil, index
+		return CONVERT_CMY_CMYK
+			and direct_color(mode, a or 0, b or 0, c or 0)
+			or nil, index
 	end
 
 	-- CMYK.
 	if mode == 4 then
-		if CONVERT_CMY_CMYK and field_count >= 5 and field_count <= 7 then
-			return direct_color(mode, a, b, c, d), index
-		end
-
-		return nil, index
+		return CONVERT_CMY_CMYK
+			and direct_color(mode, a or 0, b or 0, c or 0, d or 0)
+			or nil, index
 	end
 
 	-- Unsupported ISO color mode.
@@ -626,25 +648,27 @@ local function read_extended_color(value, index, last)
 
 	local next_separator = byte(value, index)
 
-	-- ISO colon syntax or the optional mixed-separator compatibility form.
-	if next_separator == COLON then
-		if separator == SEMICOLON and not ALLOW_MIXED_SEPARATORS then
-			return nil, skip_to_semicolon(value, index, last)
-		end
-
-		return read_colon_fields(value, index, last, mode)
-	end
-
-	-- ISO modes 0 and 1 do not require additional parameter elements.
-	-- These modes are only accepted with the colon introducer.
+	-- ISO colon syntax. The first separator selects the syntax: after a
+	-- colon, semicolons separate top-level SGR parameters rather than
+	-- continuing the extended-color group.
 	if separator == COLON then
+		-- ISO modes 0 and 1 do not require additional parameter elements.
 		if mode == 0 and (next_separator == SEMICOLON or index > last) then
 			return nil, index
 		elseif mode == 1 and (next_separator == SEMICOLON or index > last) then
 			return "NONE", index
 		end
 
-		return nil, skip_to_semicolon(value, index, last)
+		return read_colon_fields(value, index, last, mode)
+	end
+
+	-- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
+	if next_separator == COLON then
+		if not ALLOW_MIXED_SEPARATORS then
+			return nil, skip_to_semicolon(value, index, last)
+		end
+
+		return read_colon_fields(value, index, last, mode)
 	end
 
 	-- xterm semicolon syntax.
