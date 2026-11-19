@@ -4,6 +4,7 @@
 --   busted --config-file=spec/busted.lua spec/
 
 local context_lines = {}
+local BUFNR = 1
 
 -- Provide the small part of the Neovim API used by parser vectors.
 -- Busted loads specs in its own environment, so publish the stub through _G.
@@ -51,7 +52,7 @@ vim.api.nvim_list_bufs = function()
         return {}
     end
 
-    return { 1 }
+    return { BUFNR }
 end
 
 vim.api.nvim_buf_is_valid = function()
@@ -452,7 +453,7 @@ local function collect_matches(str, patterns)
 end
 
 local function resolve_decorations(parser, input, row)
-    local matches = collect_matches(input, parser.patterns)
+    local matches = collect_matches(input, parser.pattern)
     local decorations = {}
 
     for i = 1, #matches do
@@ -460,7 +461,7 @@ local function resolve_decorations(parser, input, row)
         local decoration
 
         if parser.resolve then
-            decoration = parser.resolve(match, row)
+            decoration = parser.resolve(parser, match, BUFNR, row)
         else
             decoration = {
                 color = match.value,
@@ -574,9 +575,9 @@ it("vector file contains cases for every parser", function()
 end)
 
 for _, parser_id in ipairs(PARSER_ORDER) do
-    it(parser_id .. " exposes patterns", function()
+    it(parser_id .. " exposes pattern", function()
         local parser = PARSERS[parser_id]
-        assert.is_true(type(parser.patterns) == "table", parser_id .. ": patterns must be a table")
-        assert.is_true(#parser.patterns > 0, parser_id .. ": patterns must not be empty")
+        assert.is_true(type(parser.pattern) == "table", parser_id .. ": pattern must be a table")
+        assert.is_true(#parser.pattern > 0, parser_id .. ": pattern must not be empty")
     end)
 end

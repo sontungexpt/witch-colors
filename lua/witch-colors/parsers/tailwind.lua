@@ -37,9 +37,9 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = patterns,
+    pattern = patterns,
 
-    resolve = function(match)
+    resolve = function(_parser, match, _bufnr, _row)
         local value = match.value
         local separator = value:find("-", 1, true)
 

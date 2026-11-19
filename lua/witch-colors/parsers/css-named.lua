@@ -22,11 +22,11 @@ local CSS_NAMED_COLOR_PATTERN = "%f[%a][%a]+%f[^%w_%-]"
 
 ---@type witch-colors.Parser
 return {
-    patterns = {
+    pattern = {
         CSS_NAMED_COLOR_PATTERN,
     },
 
-    resolve = function(match)
+    resolve = function(_parser, match, _bufnr, _row)
         local color = PALETTE[str_lower(match.value)]
 
         if color == nil then

@@ -273,11 +273,11 @@ end
 
 ---@type witch-colors.Parser
 return {
-	patterns = {
+	pattern = {
 		HSL_BARE_PATTERN,
 	},
 
-	resolve = function(match, _row)
+	resolve = function(_parser, match, _bufnr, _row)
 		local value_start = match.value:find(":", 1, true)
 
 		if value_start == nil then return nil end

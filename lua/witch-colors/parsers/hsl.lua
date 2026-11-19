@@ -375,9 +375,9 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = HSL_PATTERNS,
+    pattern = HSL_PATTERNS,
 
-    resolve = function(match)
+    resolve = function(_parser, match, _bufnr, _row)
         local h, s, l, alpha = parse_hsl(match.value)
         if h == nil or s == nil or l == nil then
             return nil

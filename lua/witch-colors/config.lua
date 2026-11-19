@@ -60,7 +60,7 @@ local config = {
         hex = {
             enabled = true,
             priority = 1,
-            patterns = {
+            pattern = {
                 -- 0xRRGGBB
                 "%f[%w]0[xX]%x%x%x%x%x%x%f[^%w_-]",
 
@@ -70,7 +70,7 @@ local config = {
                 -- #RRGGBBAA
                 "%f[#]#%x%x%x%x%x%x%x%x%f[^%w_-]",
             },
-            resolve = function(match)
+            resolve = function(_parser, match, _bufnr, _row)
                 local value = match.value
                 local HASH = 35
 
@@ -89,7 +89,7 @@ local config = {
         short_hex = {
             enabled = true,
             priority = 2,
-            patterns = {
+            pattern = {
                 -- #RGB, #RGBA
                 "%f[#]#%x%x%x%x?%f[^%w_-]",
             },

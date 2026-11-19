@@ -851,12 +851,14 @@ end
 
 ---@type witch-colors.Parser
 return {
-	patterns = patterns,
+	pattern = patterns,
 
+	---@param _parser witch-colors.Parser
 	---@param match witch-colors.PatternMatch
+	---@param _bufnr integer
 	---@param _row integer
 	---@return witch-colors.DecorationWithColor|nil
-	resolve = function(match, _row)
+	resolve = function(_parser, match, _bufnr, _row)
 		local value = match.value
 		local len = #value
 

@@ -5,6 +5,8 @@
 
 local parser = require("witch-colors.parsers.sgr")
 
+local BUFNR = 1
+
 local function eq(actual, expected, label)
     assert.are.same(expected, actual, label)
 end
@@ -26,11 +28,11 @@ local function count_keys(t)
 end
 
 -- Emulate the host's pattern matching contract. The parser's resolve() gets
--- the matched byte slice and the exact Lua pattern that found it.
+-- the matched byte slice, the exact Lua pattern that found it, bufnr, and row.
 local function find_and_resolve(subject, row)
     local found
 
-    for _, pattern in ipairs(parser.patterns) do
+    for _, pattern in ipairs(parser.pattern) do
         local first, last = string.find(subject, pattern)
         if first then
             if found then
@@ -49,7 +51,7 @@ local function find_and_resolve(subject, row)
         return nil, nil
     end
 
-    return parser.resolve(found, row or 0), found
+    return parser.resolve(parser, found, BUFNR, row or 0), found
 end
 
 local ESC = string.char(0x1B)
@@ -105,46 +107,46 @@ it("module returns a parser table", function()
     eq(type(parser), "table")
 end)
 
-it("parser exposes exactly patterns and resolve", function()
-    eq(type(parser.patterns), "table")
+it("parser exposes exactly pattern and resolve", function()
+    eq(type(parser.pattern), "table")
     eq(type(parser.resolve), "function")
     eq(count_keys(parser), 2)
-    truthy(parser.patterns ~= nil)
+    truthy(parser.pattern ~= nil)
     truthy(parser.resolve ~= nil)
     falsy(parser.set_palette, "set_palette must not be exported")
     falsy(parser.parse, "parse must not be exported")
 end)
 
 it("parser has 24 configured introducers with raw C1 disabled", function()
-    eq(#parser.patterns, 24)
+    eq(#parser.pattern, 24)
 end)
 
 it("patterns are unique", function()
     local seen = {}
-    for _, pattern in ipairs(parser.patterns) do
+    for _, pattern in ipairs(parser.pattern) do
         falsy(seen[pattern], "duplicate pattern: " .. pattern)
         seen[pattern] = true
     end
 end)
 
 it("patterns are strings", function()
-    for i, pattern in ipairs(parser.patterns) do
+    for i, pattern in ipairs(parser.pattern) do
         eq(type(pattern), "string", "pattern " .. i)
     end
 end)
 
 it("unknown pattern is rejected by resolve", function()
     local value = ESC .. "[31m"
-    local result = parser.resolve({
+    local result = parser.resolve(parser, {
         value = value,
         pattern = "not-a-registered-pattern",
         col_start = 0,
         col_end = #value,
-    }, 0)
+    }, BUFNR, 0)
     eq(result, nil)
 end)
 
-it("row argument is accepted and does not affect color resolution", function()
+it("bufnr and row arguments are accepted and do not affect color resolution", function()
     local result = parse("31", nil, nil, nil, 123)
     truthy(result)
     eq(result.fg, 0xCD0000)
@@ -713,5 +715,3 @@ it("no color or reset-only sequence returns nil", function()
     expect_result_nil("59")
     expect_result_nil("1;2;3;4")
 end)
-
-

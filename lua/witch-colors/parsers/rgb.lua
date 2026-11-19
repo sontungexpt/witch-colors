@@ -379,9 +379,9 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = { RGB_PATTERN },
+    pattern = { RGB_PATTERN },
 
-    resolve = function(match)
+    resolve = function(_parser, match, _bufnr, _row)
         local r, g, b, a = parse_rgb(match.value)
 
         if r == nil then

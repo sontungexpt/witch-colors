@@ -728,11 +728,11 @@ end
 
 ---@type witch-colors.Parser
 return {
-    patterns = {
+    pattern = {
         VAR_USAGE_PATTERN,
     },
 
-    resolve = function(match, _row)
+    resolve = function(_parser, match, _bufnr, _row)
         if type(match) ~= "table" or type(match.value) ~= "string" then
             return nil
         end

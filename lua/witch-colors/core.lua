@@ -212,7 +212,7 @@ local function render_buf_range(bufnr, first_row, last_row)
             local parse = parser.parse
 
             if parse then
-                local ds = parse(line, row)
+                local ds = parse(parser, line, bufnr, row)
 
                 if ds then
                     for k = 1, #ds do
@@ -223,10 +223,21 @@ local function render_buf_range(bufnr, first_row, last_row)
             end
 
             -- Pattern-based resolver.
-            local patterns = parser.patterns
+            local pattern = parser.pattern
 
-            if patterns and next(patterns) then
-                local matches, match_count = collect_matches(line, patterns)
+            local pattern_type = type(pattern)
+            if pattern_type == "function" then
+                pattern = pattern(parser, line, bufnr, row)
+                pattern_type = type(pattern)
+            end
+
+            if pattern_type == "string" then
+                pattern = { pattern }
+                pattern_type = "table"
+            end
+
+            if pattern_type == "table" then
+                local matches, match_count = collect_matches(line, pattern)
                 local resolve = parser.resolve
 
                 for k = 1, match_count do
@@ -234,7 +245,7 @@ local function render_buf_range(bufnr, first_row, last_row)
                     local decoration
 
                     if resolve then
-                        decoration = resolve(match, row)
+                        decoration = resolve(parser, match, bufnr, row)
                     else
                         decoration = {
                             color = match.value,

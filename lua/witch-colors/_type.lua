@@ -77,6 +77,19 @@
 --- Determines processing order; lower values run first.
 --- @field priority? integer
 ---
+---
+--- Recommended configuration for the parser.
+---
+--- Unlike plugin configuration, this field is not automatically merged with
+--- the defaults. Users may replace or modify it through `Config.merge`, so
+--- its value or structure is not guaranteed to remain unchanged. It may be
+--- nil, have an unexpected type, or contain missing or invalid fields.
+---
+--- Always validate the configuration and every field before accessing them.
+--- Fall back to the corresponding default whenever a value is missing or
+--- invalid. Never assume the declared structure is preserved at runtime.
+--- @field config? table
+---
 --- The path to the module that contains the lazy fields.
 --- For example, `path = "witch-colors.parsers.my_parser"` will load `require("witch-colors.parsers.my_parser")`.
 --- Or you can use the path of the module in neovim config directory `path = "core.my_parser"` will load `require("core.my_parser")`.
@@ -85,15 +98,18 @@
 --- Parses an entire line into highlight specifications.
 --- Called once per line. Returns nil when no marks are produced.
 --- `row` is a 0-based buffer row.
---- @field parse? fun(line: string, row: integer): witch-colors.DecorationWithColor[]|nil
+--- This can be placed inside a lazy-loaded file.
+--- @field parse? fun(parser: witch-colors.Parser, line: string, bufnr: integer, row: integer): witch-colors.DecorationWithColor[]|nil
 ---
 --- Lua patterns used to find candidate color values in each line.
---- @field patterns? string[]
+--- This can be placed inside a lazy-loaded file.
+--- @field pattern? string|string[]|fun(parser: witch-colors.Parser, line: string, bufnr: integer, row: integer): string[]|string
 ---
 --- Resolves a pattern match into a highlight specification.
 --- Called once per match. Returns nil if the value cannot be resolved.
 --- `row` is a 0-based buffer row.
---- @field resolve? fun(match: witch-colors.PatternMatch, row: integer): witch-colors.DecorationWithColor|nil
+--- This can be placed inside a lazy-loaded file.
+--- @field resolve? fun(parser: witch-colors.Parser, match: witch-colors.PatternMatch, bufnr: integer, row: integer): witch-colors.DecorationWithColor|nil
 
 --- Buffer exclusion rules. Any matching rule excludes the entire buffer.
 --- @class witch-colors.Config.Excluded
