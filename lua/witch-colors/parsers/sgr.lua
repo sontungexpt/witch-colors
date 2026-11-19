@@ -1,231 +1,173 @@
 -- ============================================================================
--- Unified SGR color source
+-- Unified SGR color parser
 --
--- Color targets:
---   38 = foreground
---   48 = background
+-- Targets:
+--   38 = foreground (fg)
+--   48 = background (bg)
+--   58 = underline color (sp)
 --
--- Supported ANSI colors:
+-- ANSI:
 --   30-37, 40-47
 --   90-97, 100-107 (aixterm extension)
 --
--- Indexed color:
---   38;5;N
---   48;5;N
---   38:5:N
---   48:5:N
+-- Indexed:
+--   38;5;N / 48;5;N
+--   38:5:N / 48:5:N
+--
+-- Truecolor:
+--   38;2;R;G;B / 48;2;R;G;B
+--   38:2::R:G:B / 48:2::R:G:B
+--   38:2:CSID:R:G:B / 48:2:CSID:R:G:B
+--
+-- Compatibility forms:
+--   38:2:R:G:B (legacy shorthand)
 --   38;5:N
---   48;5:N
---
--- RGB truecolor:
---   38;2;R;G;B
---   48;2;R;G;B
---   38:2::R:G:B
---   48:2::R:G:B
---   38:2:CSID:R:G:B
---   48:2:CSID:R:G:B
 --   38;2:CSID:R:G:B
---   48;2:CSID:R:G:B
 --
--- Legacy compatibility:
---   38:2:R:G:B
---   48:2:R:G:B
+-- Optional ISO modes:
+--   3 = CMY
+--   4 = CMYK
 --
--- ISO/IEC 8613-6 RGB optional fields:
---   PE6: reserved / unused
---   PE7: tolerance
---   PE8: tolerance color space (0 = CIELUV, 1 = CIELAB)
+-- Color modes:
+--   0 = implementation-defined; ignored
+--   1 = transparent; represented as "NONE"
+--   2 = RGB
+--   3 = CMY
+--   4 = CMYK
+--   5 = indexed
 --
--- Other ISO color modes (0, 1, 3, 4) are recognized as parameter groups
--- but are not converted to RGB.
+-- Resets:
+--   0  = fg + bg + sp
+--   39 = fg
+--   49 = bg
+--   59 = sp
 --
--- SGR resets:
---   0  = foreground + background
---   39 = foreground
---   49 = background
---
--- Invalid extended colors do not overwrite previously resolved colors.
--- The last valid declaration wins.
---
--- ANSI colors use a fixed default xterm palette. Terminal customizations
--- cannot be inferred from the SGR sequence itself.
+-- Other SGR attributes are ignored.
+-- This source returns only witch-colors.DecorationWithColor.
 -- ============================================================================
 
-local str_byte = string.byte
-local str_char = string.char
+local byte = string.byte
+local char = string.char
 local floor = math.floor
 
 -- ============================================================================
--- Configuration
+-- Internal configuration
 -- ============================================================================
 
--- Accept the non-standard but commonly encountered colon RGB shorthand:
---   38:2:R:G:B
---
--- Set false for strict ISO/IEC 8613-6 colon syntax.
+-- Non-standard colon RGB shorthand: 38:2:R:G:B.
 local ALLOW_LEGACY_COLON_RGB = true
+
+-- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
+local ALLOW_MIXED_SEPARATORS = true
+
+-- Raw 0x9B can be a UTF-8 continuation byte.
+-- Keep disabled for UTF-8 buffers.
+local ACCEPT_RAW_C1_BYTE = false
+
+-- CMY/CMYK conversion assumes 8-bit components and an ordinary CMY/CMYK
+-- interpretation. It does not apply profile-specific CSID scaling/offsets.
+local CONVERT_CMY_CMYK = false
 
 -- ============================================================================
 -- Constants
 -- ============================================================================
 
-local SEMICOLON = 59 -- ';'
-local COLON = 58 -- ':'
-local TERMINATOR = 109 -- 'm'
+local SEMICOLON = 59
+local COLON = 58
+local TERMINATOR = 109
 
 local DIGIT_ZERO = 48
 local DIGIT_NINE = 57
 
-local ESC = "\27"
-local CSI_8 = str_char(0x9B)
-
--- Literal representations of escape introducers.
-local ESC_033 = "\\033"
-local ESC_27 = "\\27"
-local ESC_X1B = "\\x1[bB]"
-local ESC_E = "\\e"
-local ESC_U001B = "\\u001[bB]"
-
--- Literal representations of 8-bit CSI.
-local CSI_X9B = "\\x9[bB]"
-local CSI_U009B = "\\u009[bB]"
+local ESC = char(0x1B)
+local CSI_UTF8 = char(0xC2, 0x9B)
 
 -- ============================================================================
--- SGR patterns
+-- Introducers and patterns
 -- ============================================================================
 
---- Build Lua patterns for SGR sequences.
----
---- @param param_charset string Parameter character class.
---- @return string[]
-local function sgr_patterns(param_charset)
-	local suffix = "%[" .. param_charset .. "m"
-	local c1_suffix = param_charset .. "m"
+-- Keep all supported introducers in one registry.
+-- The same registry generates patterns and parameter offsets.
 
-	return {
-		-- Actual escape introducers.
-		ESC .. suffix,
-		CSI_8 .. c1_suffix,
+local INTRODUCERS = {
+	ESC .. "[",
+	CSI_UTF8,
 
-		-- Literal escape representations.
-		ESC_033 .. suffix,
-		ESC_27 .. suffix,
-		ESC_X1B .. suffix,
-		ESC_E .. suffix,
-		ESC_U001B .. suffix,
+	"\\033[",
+	"\\027[",
+	"\\27[",
 
-		-- Literal 8-bit CSI representations.
-		CSI_X9B .. c1_suffix,
-		CSI_U009B .. c1_suffix,
-	}
+	"\\x1b[",
+	"\\x1B[",
+
+	"\\e[",
+	"\\E[",
+
+	"\\u001b[",
+	"\\u001B[",
+
+	"\\u{1b}[",
+	"\\u{1B}[",
+
+	"\\x{1b}[",
+	"\\x{1B}[",
+
+	"^[[",
+
+	-- Literal 8-bit CSI representations.
+	-- C1 CSI does not require a following '['.
+	"\\x9b",
+	"\\x9B",
+
+	"\\u009b",
+	"\\u009B",
+
+	"\\u{9b}",
+	"\\u{9B}",
+
+	"\\x{9b}",
+	"\\x{9B}",
+}
+
+if ACCEPT_RAW_C1_BYTE then
+	INTRODUCERS[#INTRODUCERS + 1] = char(0x9B)
 end
 
--- ============================================================================
--- CSI introducer
--- ============================================================================
-
---- Find the beginning of SGR parameters.
+--- Escape a literal string for use inside a Lua pattern.
 ---
---- Supported:
----   ESC [
----   0x9B
----   \27[
----   \033[
----   \x1b[ / \x1B[
----   \e[
----   \u001b[ / \u001B[
----   \x9b[ / \x9B[
----   \u009b[ / \u009B[
+--- Executed only during module initialization.
 ---
 --- @param value string
---- @return integer|nil
-local function get_param_start(value)
-	local b1 = str_byte(value, 1)
+--- @return string
+local function escape_pattern(value)
+	return (value:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
+end
 
-	-- Actual 8-bit CSI.
-	if b1 == 0x9B then
-		return 2
-	end
+local patterns = {}
 
-	-- Actual 7-bit CSI.
-	if b1 == 27 and str_byte(value, 2) == 91 then
-		return 3
-	end
+-- Pattern -> parameter start offset.
+--
+-- resolve() receives match.pattern through witch-colors.PatternMatch.
+-- This avoids scanning all introducers again for every match.
+local PARAM_START_BY_PATTERN = {}
 
-	if b1 ~= 92 then -- '\'
-		return nil
-	end
+for i = 1, #INTRODUCERS do
+	local introducer = INTRODUCERS[i]
+	local pattern = escape_pattern(introducer) .. "[0-9;:]*m"
 
-	local b2 = str_byte(value, 2)
-
-	-- Literal "\27["
-	if b2 == 50
-		and str_byte(value, 3) == 55
-		and str_byte(value, 4) == 91
-	then
-		return 5
-	end
-
-	-- Literal "\033["
-	if b2 == 48
-		and str_byte(value, 3) == 51
-		and str_byte(value, 4) == 51
-		and str_byte(value, 5) == 91
-	then
-		return 6
-	end
-
-	-- Literal "\x1b[" / "\x1B[" / "\x9b[" / "\x9B["
-	if b2 == 120 then
-		local value_byte = str_byte(value, 3)
-		local hex_byte = str_byte(value, 4)
-
-		if (value_byte == 49 or value_byte == 57)
-			and (hex_byte == 98 or hex_byte == 66)
-			and str_byte(value, 5) == 91
-		then
-			return 6
-		end
-
-		return nil
-	end
-
-	-- Literal "\e["
-	if b2 == 101 and str_byte(value, 3) == 91 then
-		return 4
-	end
-
-	-- Literal "\u001b[" / "\u001B[" / "\u009b[" / "\u009B["
-	if b2 == 117 then
-		local b3 = str_byte(value, 3)
-		local b4 = str_byte(value, 4)
-		local b5 = str_byte(value, 5)
-		local b6 = str_byte(value, 6)
-		local b7 = str_byte(value, 7)
-
-		if b3 == 48
-			and b4 == 48
-			and (b5 == 49 or b5 == 57)
-			and (b6 == 98 or b6 == 66)
-			and b7 == 91
-		then
-			return 8
-		end
-	end
-
-	return nil
+	patterns[i] = pattern
+	PARAM_START_BY_PATTERN[pattern] = #introducer + 1
 end
 
 -- ============================================================================
--- ANSI / xterm palettes
+-- Palette
 -- ============================================================================
 
---- Default xterm 16-color palette.
----
---- The actual terminal palette is implementation-defined and configurable.
---- These values are used as a fallback.
----
---- @type integer[]
+-- Default xterm 16-color palette.
+--
+-- These are fallback RGB values, not the user's actual terminal palette.
+-- Keep this private: custom palette mutation is not part of witch-colors.Parser.
+
 local ANSI_COLORS = {
 	0x000000, 0xCD0000, 0x00CD00, 0xCDCD00,
 	0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
@@ -233,16 +175,15 @@ local ANSI_COLORS = {
 	0x5C5CFF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
 }
 
---- The six channel levels of the xterm 6x6x6 color cube.
----
---- @type integer[]
-local CUBE_LEVELS = { 0, 95, 135, 175, 215, 255 }
+local CUBE_LEVELS = {
+	0, 95, 135, 175, 215, 255,
+}
 
---- Convert an xterm 256-color index into packed RGB.
+--- Convert an xterm 256-color index to packed RGB.
 ---
 --- @param index integer
 --- @return integer
-local function xterm256_to_rgb(index)
+local function palette_to_rgb(index)
 	if index < 16 then
 		return ANSI_COLORS[index + 1]
 	end
@@ -270,8 +211,8 @@ end
 
 --- Read an unsigned decimal integer.
 ---
---- Consumes every consecutive digit, even when the value exceeds `limit`.
---- Empty fields and out-of-range values return nil.
+--- Consumes all consecutive digits, including out-of-range values.
+--- Empty fields and values above limit return nil.
 ---
 --- @param value string
 --- @param index integer
@@ -285,7 +226,7 @@ local function read_uint(value, index, last, limit)
 	local valid = true
 
 	while index <= last do
-		local b = str_byte(value, index)
+		local b = byte(value, index)
 
 		if b < DIGIT_ZERO or b > DIGIT_NINE then
 			break
@@ -309,7 +250,7 @@ local function read_uint(value, index, last, limit)
 	return n, index
 end
 
---- Consume consecutive decimal digits without converting the value.
+--- Skip consecutive decimal digits without converting them.
 ---
 --- @param value string
 --- @param index integer
@@ -320,7 +261,7 @@ local function skip_digits(value, index, last)
 	local first = index
 
 	while index <= last do
-		local b = str_byte(value, index)
+		local b = byte(value, index)
 
 		if b < DIGIT_ZERO or b > DIGIT_NINE then
 			break
@@ -332,21 +273,21 @@ local function skip_digits(value, index, last)
 	return index > first, index
 end
 
---- Consume an optional numeric field.
+--- Consume an optional integer.
 ---
---- Empty fields are valid. When `limit` is nil, the numeric value is
---- intentionally not converted or range-checked.
+--- Empty fields are valid.
+--- When present, the value must not exceed limit.
 ---
 --- @param value string
 --- @param index integer
 --- @param last integer
---- @param limit integer|nil
+--- @param limit integer|nil Optional upper bound; nil accepts any unsigned integer.
 --- @return boolean valid
 --- @return integer next_index
-local function consume_optional_integer(value, index, last, limit)
-	local b = str_byte(value, index)
+local function read_optional_uint(value, index, last, limit)
+	local b = byte(value, index)
 
-	-- Empty parameter element.
+	-- An omitted optional PE is the default value.
 	if index > last or b == COLON or b == SEMICOLON then
 		return true, index
 	end
@@ -357,20 +298,21 @@ local function consume_optional_integer(value, index, last, limit)
 		return n ~= nil, index
 	end
 
+	-- PE6 is reserved and PE7 is an integer tolerance. Their values are
+	-- not needed here, but a present field must still contain decimal digits.
 	local has_digits
 	has_digits, index = skip_digits(value, index, last)
-
 	return has_digits, index
 end
 
---- Advance to the next top-level semicolon.
+--- Skip to the next top-level semicolon.
 ---
 --- @param value string
 --- @param index integer
 --- @param last integer
 --- @return integer
 local function skip_to_semicolon(value, index, last)
-	while index <= last and str_byte(value, index) ~= SEMICOLON do
+	while index <= last and byte(value, index) ~= SEMICOLON do
 		index = index + 1
 	end
 
@@ -378,62 +320,124 @@ local function skip_to_semicolon(value, index, last)
 end
 
 -- ============================================================================
--- RGB helpers
+-- RGB conversion
 -- ============================================================================
 
---- Pack three 8-bit channels into a 24-bit RGB integer.
+--- Pack 8-bit RGB channels into 0xRRGGBB.
 ---
---- @param r integer|nil
---- @param g integer|nil
---- @param b integer|nil
---- @return integer|nil
+--- @param r integer
+--- @param g integer
+--- @param b integer
+--- @return integer
 local function pack_rgb(r, g, b)
-	if r ~= nil and g ~= nil and b ~= nil then
-		return r * 0x10000 + g * 0x100 + b
+	return r * 0x10000 + g * 0x100 + b
+end
+
+--- Round a positive numeric value to the nearest integer.
+---
+--- @param value number
+--- @return integer
+local function round(value)
+	return floor(value + 0.5)
+end
+
+--- Convert direct color modes.
+---
+--- Mode 2 = RGB.
+--- Mode 3 = CMY.
+--- Mode 4 = CMYK.
+---
+--- CMY/CMYK conversions assume 8-bit components.
+--- CSID-specific profile scaling is not applied.
+---
+--- @param mode integer
+--- @param a integer
+--- @param b integer
+--- @param c integer
+--- @param d integer|nil
+--- @return integer|nil
+local function direct_color(mode, a, b, c, d)
+	if a == nil or b == nil or c == nil then
+		return nil
+	end
+
+	if mode == 2 then
+		return pack_rgb(a, b, c)
+	end
+
+	if mode == 3 then
+		return pack_rgb(
+			255 - a,
+			255 - b,
+			255 - c
+		)
+	end
+
+	if mode == 4 and d ~= nil then
+		local k = 1 - d / 255
+
+		return pack_rgb(
+			round(255 * (1 - a / 255) * k),
+			round(255 * (1 - b / 255) * k),
+			round(255 * (1 - c / 255) * k)
+		)
 	end
 
 	return nil
 end
 
 -- ============================================================================
--- ISO colon-separated color fields
--- ============================================================================
---
--- `index` points at the colon immediately after the color mode.
---
--- Mode 5:
---   N
---
--- Mode 2:
---   CSID:R:G:B[:PE6[:PE7[:PE8]]]
---
--- Legacy compatibility:
---   R:G:B
---
--- The first field of mode 2 is the color-space identifier.
--- It may be empty or numeric and is not used for RGB conversion.
+-- Colon-separated extended colors
 -- ============================================================================
 
---- Read colon-separated fields following an extended color mode.
+-- The first field is CSID.
+--
+-- RGB:
+--   CSID:R:G:B[:PE6[:PE7[:PE8]]]
+--
+-- CMY:
+--   CSID:C:M:Y[:PE6[:PE7[:PE8]]]
+--
+-- CMYK:
+--   CSID:C:M:Y:K[:PE7[:PE8]]
+--
+-- CSID is accepted as empty or numeric.
+-- PE6 and PE7 are consumed but not used.
+-- PE8, when supplied, must be empty, 0 or 1.
+
+--- Read an ISO colon-separated extended-color group.
+---
+--- `index` points at the colon after the mode.
 ---
 --- @param value string
 --- @param index integer
 --- @param last integer
 --- @param mode integer
---- @return integer|nil color
+--- @return integer|string|nil color
 --- @return integer next_index
 local function read_colon_fields(value, index, last, mode)
 	local field_count = 0
 	local valid = true
 
-	local f1, f2, f3, f4
+	local csid_rgb
 	local palette_index
 
-	while index <= last and str_byte(value, index) == COLON do
+	local a, b, c, d
+
+	local required_fields
+
+	if mode == 2 or mode == 3 then
+		required_fields = 4
+	elseif mode == 4 then
+		required_fields = 5
+	end
+
+	while index <= last and byte(value, index) == COLON do
 		index = index + 1
 		field_count = field_count + 1
 
 		if mode == 5 then
+			-- Indexed color: exactly one palette field.
 			if field_count == 1 then
 				palette_index, index = read_uint(value, index, last, 255)
 
@@ -447,63 +451,45 @@ local function read_colon_fields(value, index, last, mode)
 				index = next_index
 			end
 
-		elseif mode == 2 then
+		elseif required_fields ~= nil then
 			if field_count == 1 then
-				-- CSID: empty or numeric.
+				-- CSID: numeric or empty.
 				-- It is not restricted to the RGB channel range.
 				local start = index
 				local has_digits
 
 				has_digits, index = skip_digits(value, index, last)
 
-				if has_digits then
-					-- Also attempt to interpret it as a channel for
-					-- the optional legacy R:G:B shorthand.
-					f1 = read_uint(value, start, last, 255)
+				-- Retained only for legacy RGB shorthand.
+				if has_digits and mode == 2 then
+					csid_rgb = read_uint(value, start, last, 255)
 				end
 
-				if not has_digits
-					and index <= last
-					and str_byte(value, index) ~= COLON
-					and str_byte(value, index) ~= SEMICOLON
-				then
+			elseif field_count >= 2 and field_count <= required_fields then
+				local channel
+				channel, index = read_uint(value, index, last, 255)
+
+				if channel == nil then
 					valid = false
 				end
 
-			elseif field_count == 2 then
-				f2, index = read_uint(value, index, last, 255)
-
-				if f2 == nil then
-					valid = false
+				if field_count == 2 then
+					a = channel
+				elseif field_count == 3 then
+					b = channel
+				elseif field_count == 4 then
+					c = channel
+				elseif field_count == 5 then
+					d = channel
 				end
 
-			elseif field_count == 3 then
-				f3, index = read_uint(value, index, last, 255)
-
-				if f3 == nil then
-					valid = false
-				end
-
-			elseif field_count == 4 then
-				f4, index = read_uint(value, index, last, 255)
-
-				if f4 == nil then
-					valid = false
-				end
-
-			elseif field_count == 5 then
-				-- PE6: reserved / unused.
+			elseif (mode == 4 and field_count == 6)
+				or (mode ~= 4 and (field_count == 5 or field_count == 6)) then
+				-- PE6 is reserved for RGB/CMY; PE7 is tolerance.
+				-- For CMYK, field 5 is K, so field 6 is PE7.
 				local ok
-				ok, index = consume_optional_integer(value, index, last)
 
-				if not ok then
-					valid = false
-				end
-
-			elseif field_count == 6 then
-				-- PE7: tolerance.
-				local ok
-				ok, index = consume_optional_integer(value, index, last)
+				ok, index = read_optional_uint(value, index, last, nil)
 
 				if not ok then
 					valid = false
@@ -513,7 +499,8 @@ local function read_colon_fields(value, index, last, mode)
 				-- PE8: tolerance color space.
 				-- 0 = CIELUV, 1 = CIELAB.
 				local ok
-				ok, index = consume_optional_integer(value, index, last, 1)
+
+				ok, index = read_optional_uint(value, index, last, 1)
 
 				if not ok then
 					valid = false
@@ -528,168 +515,202 @@ local function read_colon_fields(value, index, last, mode)
 			end
 
 		else
-			-- Other ISO color modes are consumed as a complete group,
-			-- but cannot be represented by this RGB-only result.
+			-- Modes not converted by this source are still consumed as a
+			-- complete colon group so their subparameters cannot leak into
+			-- the main SGR parameter parser.
 			local _, next_index = skip_digits(value, index, last)
 			index = next_index
 		end
 	end
 
-	-- Leave the next top-level SGR parameter untouched.
+	-- Preserve the next top-level SGR parameter.
 	index = skip_to_semicolon(value, index, last)
 
+	-- Indexed color.
 	if mode == 5 then
 		if valid and field_count == 1 then
-			return xterm256_to_rgb(palette_index), index
+			return palette_to_rgb(palette_index), index
 		end
 
 		return nil, index
 	end
 
-	if mode == 2 and valid then
-		-- Standard form:
-		-- CSID:R:G:B, optionally followed by PE6, PE7 and PE8.
-		if field_count >= 4 and field_count <= 7 then
-			return pack_rgb(f2, f3, f4), index
-		end
-
-		-- Non-standard compatibility form:
-		-- R:G:B (no CSID field).
-		if ALLOW_LEGACY_COLON_RGB and field_count == 3 then
-			return pack_rgb(f1, f2, f3), index
-		end
+	-- Implementation-defined color: no RGB conversion.
+	if mode == 0 then
+		return nil, index
 	end
 
+	-- Transparent color.
+	-- witch-colors.Decoration supports the explicit "NONE" value.
+	if mode == 1 then
+		if field_count == 0 then
+			return "NONE", index
+		end
+
+		return nil, index
+	end
+
+	if not valid then
+		return nil, index
+	end
+
+	-- RGB.
+	if mode == 2 then
+		-- Standard ISO representation:
+		-- CSID:R:G:B[:PE6[:PE7[:PE8]]]
+		if field_count >= 4 and field_count <= 7 then
+			return pack_rgb(a, b, c), index
+		end
+
+		-- Legacy shorthand:
+		-- R:G:B
+		if ALLOW_LEGACY_COLON_RGB and field_count == 3 then
+			if csid_rgb ~= nil and a ~= nil and b ~= nil then
+				return pack_rgb(csid_rgb, a, b), index
+			end
+		end
+
+		return nil, index
+	end
+
+	-- CMY.
+	if mode == 3 then
+		if CONVERT_CMY_CMYK and field_count >= 4 and field_count <= 7 then
+			return direct_color(mode, a, b, c), index
+		end
+
+		return nil, index
+	end
+
+	-- CMYK.
+	if mode == 4 then
+		if CONVERT_CMY_CMYK and field_count >= 5 and field_count <= 7 then
+			return direct_color(mode, a, b, c, d), index
+		end
+
+		return nil, index
+	end
+
+	-- Unsupported ISO color mode.
 	return nil, index
 end
 
 -- ============================================================================
--- Colon-separated extended colors
+-- Extended color reader
 -- ============================================================================
 
---- Read an extended color using colon subparameters.
----
---- `index` points at the colon after 38/48.
+-- Shared by foreground, background and underline color.
+--
+-- `index` points just after parameter 38, 48 or 58.
+
+--- Read an extended color group.
 ---
 --- @param value string
 --- @param index integer
 --- @param last integer
---- @return integer|nil color
+--- @return integer|string|nil color
 --- @return integer next_index
-local function read_colon_color(value, index, last)
-	local mode
+local function read_extended_color(value, index, last)
+	local separator = byte(value, index)
 
+	if separator ~= COLON and separator ~= SEMICOLON then
+		return nil, index
+	end
+
+	local mode
 	mode, index = read_uint(value, index + 1, last, 255)
 
 	if mode == nil then
 		return nil, skip_to_semicolon(value, index, last)
 	end
 
-	-- The color subparameters must remain colon-separated.
-	if str_byte(value, index) == COLON then
+	local next_separator = byte(value, index)
+
+	-- ISO colon syntax or the optional mixed-separator compatibility form.
+	if next_separator == COLON then
+		if separator == SEMICOLON and not ALLOW_MIXED_SEPARATORS then
+			return nil, skip_to_semicolon(value, index, last)
+		end
+
 		return read_colon_fields(value, index, last, mode)
 	end
 
-	-- Modes 0 and 1 do not require additional parameters.
-	-- Other modes without their required fields are invalid.
-	return nil, index
-end
-
--- ============================================================================
--- Semicolon-separated extended colors
--- ============================================================================
---
--- Legacy xterm syntax:
---
---   38;5;N
---   48;5;N
---
---   38;2;R;G;B
---   48;2;R;G;B
---
--- Also accepts the xterm-compatible hybrid form:
---
---   38;5:N
---   48;5:N
---
---   38;2:CSID:R:G:B
---   48;2:CSID:R:G:B
---
--- Once colon subparameters begin, subsequent fields must use colons.
--- ============================================================================
-
---- Read a semicolon-separated extended color.
----
---- `index` points at the semicolon after 38/48.
----
---- @param value string
---- @param index integer
---- @param last integer
---- @return integer|nil color
---- @return integer next_index
-local function read_semicolon_color(value, index, last)
-	local mode
-
-	mode, index = read_uint(value, index + 1, last, 255)
-
-	if mode == nil then
-		return nil, index
-	end
-
-	local separator = str_byte(value, index)
-
-	-- xterm hybrid syntax:
-	-- 38;2:CSID:R:G:B
-	-- 38;5:N
+	-- ISO modes 0 and 1 do not require additional parameter elements.
+	-- These modes are only accepted with the colon introducer.
 	if separator == COLON then
-		return read_colon_fields(value, index, last, mode)
+		if mode == 0 and (next_separator == SEMICOLON or index > last) then
+			return nil, index
+		elseif mode == 1 and (next_separator == SEMICOLON or index > last) then
+			return "NONE", index
+		end
+
+		return nil, skip_to_semicolon(value, index, last)
 	end
 
-	if separator ~= SEMICOLON then
+	-- xterm semicolon syntax.
+	if next_separator ~= SEMICOLON then
 		return nil, index
 	end
 
-	-- Number of required fields in legacy semicolon syntax.
-	local field_count
+	local arity
 
 	if mode == 5 then
-		field_count = 1
+		arity = 1
 	elseif mode == 2 then
-		field_count = 3
+		arity = 3
 	else
-		-- Unsupported semicolon color mode.
+		-- Unknown semicolon mode.
+		-- Do not guess its field count.
 		return nil, index
 	end
 
-	local values = {}
+	local a, b, c
+	local valid = true
 
-	for i = 1, field_count do
-		if str_byte(value, index) ~= SEMICOLON then
+	for i = 1, arity do
+		if byte(value, index) ~= SEMICOLON then
 			return nil, index
 		end
 
 		index = index + 1
-		values[i], index = read_uint(value, index, last, 255)
-	end
 
-	if mode == 5 then
-		local palette_index = values[1]
+		local channel
+		channel, index = read_uint(value, index, last, 255)
 
-		if palette_index ~= nil then
-			return xterm256_to_rgb(palette_index), index
+		if channel == nil then
+			valid = false
 		end
 
+		if i == 1 then
+			a = channel
+		elseif i == 2 then
+			b = channel
+		elseif i == 3 then
+			c = channel
+		end
+	end
+
+	-- A colon after the final field is not part of the semicolon form.
+	if index <= last and byte(value, index) ~= SEMICOLON then
+		return nil, skip_to_semicolon(value, index, last)
+	end
+
+	if not valid then
 		return nil, index
 	end
 
-	return pack_rgb(values[1], values[2], values[3]), index
+	if mode == 5 then
+		return palette_to_rgb(a), index
+	end
+
+	return pack_rgb(a, b, c), index
 end
 
 -- ============================================================================
 -- ANSI colors
 -- ============================================================================
 
---- Map an ANSI/aixterm parameter to its target and RGB value.
+--- Resolve an ANSI/aixterm parameter.
 ---
 --- @param param integer
 --- @return "fg"|"bg"|nil kind
@@ -712,21 +733,21 @@ local function ansi_color(param)
 end
 
 -- ============================================================================
--- Main SGR parameter parser
+-- Main SGR scanner
 -- ============================================================================
 
---- Find foreground and background colors in an SGR parameter string.
+--- Resolve foreground, background and underline colors.
 ---
 --- @param value string
 --- @param index integer
 --- @param last integer
---- @return integer|nil fg
---- @return integer|nil bg
+--- @return integer|string|nil fg
+--- @return integer|string|nil bg
+--- @return integer|string|nil sp
 local function find_colors(value, index, last)
-	local fg
-	local bg
+	local fg, bg, sp
 
-	-- An empty SGR parameter list is equivalent to SGR 0.
+	-- An empty SGR parameter list is equivalent to 0.
 	local pending_empty = index > last
 
 	while index <= last or pending_empty do
@@ -736,68 +757,59 @@ local function find_colors(value, index, last)
 			param = 0
 			pending_empty = false
 
-		elseif str_byte(value, index) == SEMICOLON then
-			-- Empty top-level parameter is equivalent to 0.
+		elseif byte(value, index) == SEMICOLON then
+			-- Empty top-level parameter.
 			param = 0
 
 		else
 			param, index = read_uint(value, index, last, 255)
 		end
 
-		if param == 38 or param == 48 then
-			local separator = str_byte(value, index)
+		if param == 38 or param == 48 or param == 58 then
 			local color
+			color, index = read_extended_color(value, index, last)
 
-			if separator == COLON then
-				color, index = read_colon_color(value, index, last)
-
-			elseif separator == SEMICOLON then
-				color, index = read_semicolon_color(value, index, last)
-			end
-
-			-- Only valid colors replace the existing value.
 			if color ~= nil then
 				if param == 38 then
 					fg = color
+				elseif param == 48 then
+					bg = color
 				else
+					sp = color
+				end
+			end
+
+		elseif param ~= nil and byte(value, index) ~= COLON then
+			if param == 0 then
+				fg, bg, sp = nil, nil, nil
+
+			elseif param == 39 then
+				fg = nil
+
+			elseif param == 49 then
+				bg = nil
+
+			elseif param == 59 then
+				sp = nil
+
+			else
+				local kind, color = ansi_color(param)
+
+				if kind == "fg" then
+					fg = color
+				elseif kind == "bg" then
 					bg = color
 				end
 			end
-
-		else
-			-- Do not interpret colon subparameters as independent
-			-- top-level SGR attributes (e.g. 4:3).
-			if param ~= nil and str_byte(value, index) ~= COLON then
-				if param == 0 then
-					fg, bg = nil, nil
-
-				elseif param == 39 then
-					fg = nil
-
-				elseif param == 49 then
-					bg = nil
-
-				else
-					local kind, color = ansi_color(param)
-
-					if kind == "fg" then
-						fg = color
-
-					elseif kind == "bg" then
-						bg = color
-					end
-				end
-			end
-
-			-- Ignore other parameters and their colon subparameters.
-			index = skip_to_semicolon(value, index, last)
 		end
 
-		-- Advance to the next top-level SGR parameter.
-		if str_byte(value, index) == SEMICOLON then
+		-- Ignore other SGR parameters and their colon subparameters.
+		index = skip_to_semicolon(value, index, last)
+
+		if byte(value, index) == SEMICOLON then
 			index = index + 1
 
-			-- A trailing empty parameter is also a reset.
+			-- A trailing empty parameter is also equivalent to 0.
 			if index > last then
 				pending_empty = true
 			end
@@ -806,33 +818,38 @@ local function find_colors(value, index, last)
 		end
 	end
 
-	return fg, bg
+	return fg, bg, sp
 end
 
 -- ============================================================================
 -- Parser source
 -- ============================================================================
 
+---@type witch-colors.Parser
 return {
-	patterns = sgr_patterns("[%d;:]*"),
+	patterns = patterns,
 
-	resolve = function(match)
+	---@param match witch-colors.PatternMatch
+	---@param _row integer
+	---@return witch-colors.DecorationWithColor|nil
+	resolve = function(match, _row)
 		local value = match.value
 		local len = #value
 
-		if len < 2 or str_byte(value, len) ~= TERMINATOR then
+		if len < 2 or byte(value, len) ~= TERMINATOR then
 			return nil
 		end
 
-		local param_start = get_param_start(value)
+		-- O(1) lookup using the pattern supplied by PatternMatch.
+		local param_start = PARAM_START_BY_PATTERN[match.pattern]
 
 		if not param_start then
 			return nil
 		end
 
-		local fg, bg = find_colors(value, param_start, len - 1)
+		local fg, bg, sp = find_colors(value, param_start, len - 1)
 
-		if fg == nil and bg == nil then
+		if fg == nil and bg == nil and sp == nil then
 			return nil
 		end
 
@@ -841,6 +858,7 @@ return {
 			col_end = match.col_end,
 			fg = fg,
 			bg = bg,
+			sp = sp,
 		}
 	end,
 }
