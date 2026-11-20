@@ -1,9 +1,8 @@
-local type, pairs                = type, pairs
-local vim                        = vim
-local b, bo                      = vim.b, vim.bo
-local islist                     = vim.islist
-local list_contains              = vim.list_contains
-
+local type, pairs   = type, pairs
+local vim           = vim
+local bo            = vim.bo
+local islist        = vim.islist
+local list_contains = vim.list_contains
 
 local M = {}
 
@@ -52,11 +51,12 @@ local config = {
 
     excluded = {
         filetypes = { "NvimTree" },
-        buftypes = {},
+        buftypes = { "nofile" },
         buffer = nil,
     },
 
     parsers = {
+        ---@type witch-colors.Parser
         hex = {
             enabled = true,
             priority = 1,
@@ -64,22 +64,21 @@ local config = {
                 -- 0xRRGGBB
                 "%f[%w]0[xX]%x%x%x%x%x%x%f[^%w_-]",
 
-                -- #RRGGBB
-                "%f[#]#%x%x%x%x%x%x%f[^%w_-]",
-
-                -- #RRGGBBAA
-                "%f[#]#%x%x%x%x%x%x%x%x%f[^%w_-]",
+                -- #RRGGBB or #RRGGBBAA
+                -- (%x?%x? also matches 7 hex digits, which is rejected in resolve)
+                "%f[#]#%x%x%x%x%x%x%x?%x?%f[^%w_-]",
             },
             resolve = function(_parser, match, _bufnr, _row)
                 local value = match.value
-                local HASH = 35
+                local is_hash = value:byte(1) == 35    -- '#'
 
-                local color = value:byte(1) == HASH
-                    and value
-                    or tonumber(value:sub(3), 16)
+                -- #1234567 (7 hex) rejected
+                if is_hash and #value == 8 then
+                    return nil
+                end
 
                 return {
-                    color = color,
+                    color = is_hash and value or tonumber(value:sub(3), 16),
                     col_start = match.col_start,
                     col_end = match.col_end,
                 }
@@ -87,15 +86,18 @@ local config = {
         },
 
         short_hex = {
-            enabled = true,
+            enabled = false,
             priority = 2,
             pattern = {
-                -- #RGB, #RGBA
-                "%f[#]#%x%x%x%x?%f[^%w_-]",
+                -- #RGB
+                "%f[#]#%x%x%x%f[^%w_-]",
+
+                -- #RGBA
+                "%f[#]#%x%x%x%x%f[^%w_-]",
             },
         },
 
-        rgb =  {
+        rgb = {
             path = "witch-colors.parsers.rgb",
             priority = 3,
             enabled = css_script_supported,
@@ -122,6 +124,19 @@ local config = {
             path = "witch-colors.parsers.sgr",
             enabled = true,
             priority = 7,
+            config = {
+                -- Raw 0x9B can be a UTF-8 continuation byte.
+                raw_c1 = false,
+
+                -- Non-standard shorthand: 38:2:R:G:B. T.416 requires CSID.
+                legacy_rgb = false,
+
+                -- De facto xterm/mixed form: 38;2:CSID:R:G:B.
+                mixed_sep = true,
+
+                -- Convert T.416 CMY/CMYK modes to RGB.
+                cmy_cmyk = true,
+            },
         },
 
         tailwind = {

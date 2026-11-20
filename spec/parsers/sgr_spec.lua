@@ -27,12 +27,39 @@ local function count_keys(t)
     return n
 end
 
+local function get_patterns()
+    local pattern = parser.pattern
+    local pattern_type = type(pattern)
+
+    if pattern_type == "function" then
+        return pattern(parser, "", BUFNR, 0)
+    end
+
+    if pattern_type == "string" then
+        return { pattern }
+    end
+
+    return pattern
+end
+
+local function with_config(config, fn)
+    local old = parser.config
+    parser.config = config
+
+    local ok, err = pcall(fn)
+    parser.config = old
+
+    if not ok then
+        error(err, 0)
+    end
+end
+
 -- Emulate the host's pattern matching contract. The parser's resolve() gets
 -- the matched byte slice, the exact Lua pattern that found it, bufnr, and row.
 local function find_and_resolve(subject, row)
     local found
 
-    for _, pattern in ipairs(parser.pattern) do
+    for _, pattern in ipairs(get_patterns()) do
         local first, last = string.find(subject, pattern)
         if first then
             if found then
@@ -108,7 +135,7 @@ it("module returns a parser table", function()
 end)
 
 it("parser exposes exactly pattern and resolve", function()
-    eq(type(parser.pattern), "table")
+    eq(type(parser.pattern), "function")
     eq(type(parser.resolve), "function")
     eq(count_keys(parser), 2)
     truthy(parser.pattern ~= nil)
@@ -118,19 +145,19 @@ it("parser exposes exactly pattern and resolve", function()
 end)
 
 it("parser has 24 configured introducers with raw C1 disabled", function()
-    eq(#parser.pattern, 24)
+    eq(#get_patterns(), 24)
 end)
 
 it("patterns are unique", function()
     local seen = {}
-    for _, pattern in ipairs(parser.pattern) do
+    for _, pattern in ipairs(get_patterns()) do
         falsy(seen[pattern], "duplicate pattern: " .. pattern)
         seen[pattern] = true
     end
 end)
 
 it("patterns are strings", function()
-    for i, pattern in ipairs(parser.pattern) do
+    for i, pattern in ipairs(get_patterns()) do
         eq(type(pattern), "string", "pattern " .. i)
     end
 end)
@@ -150,6 +177,65 @@ it("bufnr and row arguments are accepted and do not affect color resolution", fu
     local result = parse("31", nil, nil, nil, 123)
     truthy(result)
     eq(result.fg, 0xCD0000)
+end)
+
+-- ---------------------------------------------------------------------------
+-- Parser configuration
+-- ---------------------------------------------------------------------------
+
+describe("parser.config", function()
+    it("uses defaults for missing or malformed config", function()
+        with_config(nil, function()
+            eq(#get_patterns(), 24)
+            expect("38;2:0:255:128:64", 0xFF8040, nil, nil)
+        end)
+
+        with_config("invalid", function()
+            eq(#get_patterns(), 24)
+            expect("38;2:0:255:128:64", 0xFF8040, nil, nil)
+        end)
+
+        with_config({
+            raw_c1 = "yes",
+            legacy_rgb = 1,
+            mixed_sep = 0,
+            cmy_cmyk = "true",
+        }, function()
+            eq(#get_patterns(), 24)
+            expect("38;2:0:255:128:64", 0xFF8040, nil, nil)
+        end)
+    end)
+
+    it("enables raw C1 matching when configured", function()
+        with_config({ raw_c1 = true }, function()
+            eq(#get_patterns(), 25)
+
+            local raw_c1 = string.char(0x9B) .. "31m"
+            local result, match = find_and_resolve(raw_c1)
+            truthy(match)
+            truthy(result)
+            eq(result.fg, 0xCD0000)
+        end)
+    end)
+
+    it("honors false for mixed_sep", function()
+        with_config({ mixed_sep = false }, function()
+            expect_result_nil("38;2:0:255:128:64")
+        end)
+    end)
+
+    it("allows legacy colon RGB when configured", function()
+        with_config({ legacy_rgb = true }, function()
+            expect("38:2:1:2:3", 0x010203, nil, nil)
+        end)
+    end)
+
+    it("can disable CMY/CMYK conversion", function()
+        with_config({ cmy_cmyk = false }, function()
+            expect_result_nil("38:3::0:255:255")
+            expect_result_nil("38:4::0:255:255:0")
+        end)
+    end)
 end)
 
 -- ---------------------------------------------------------------------------

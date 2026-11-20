@@ -51,25 +51,59 @@ local char = string.char
 local floor = math.floor
 
 -- ============================================================================
--- Internal configuration
+-- Parser configuration
 -- ============================================================================
 
--- Non-standard colon RGB shorthand: 38:2:R:G:B.
--- T.416 requires the colour-space field, so this stays disabled.
-local ALLOW_LEGACY_COLON_RGB = false
+--- @class witch-colors.parsers.Sgr.Config
+--- Raw 0x9B can be a UTF-8 continuation byte, so keep it disabled by default.
+--- @field raw_c1 boolean
+--- Non-standard colon RGB shorthand: 38:2:R:G:B. T.416 requires the
+--- colour-space field, so keep this disabled by default.
+--- @field legacy_rgb boolean
+--- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
+--- @field mixed_sep boolean
+--- T.416 13.1.8 defines modes 3/4 as direct CMY/CMYK colour. The decoration
+--- stores RGB, so convert those components. This assumes 8-bit components and
+--- an ordinary CMY/CMYK interpretation; profile-specific scaling and offsets
+--- are not applied.
+--- @field cmy_cmyk boolean
 
--- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
-local ALLOW_MIXED_SEPARATORS = true
+--- @type witch-colors.parsers.Sgr.Config
+local DEFAULT_CONFIG = {
+	raw_c1 = false,
+	legacy_rgb = false,
+	mixed_sep = true,
+	cmy_cmyk = true,
+}
 
--- Raw 0x9B can be a UTF-8 continuation byte.
--- Keep disabled for UTF-8 buffers.
-local ACCEPT_RAW_C1_BYTE = false
+--- Validate and normalize `parser.config`.
+---
+--- Parser config is not merged by the core. It may be nil, malformed, or
+--- changed at runtime, so every field is checked before use.
+---
+--- @param parser witch-colors.Parser|nil
+--- @return witch-colors.parsers.Sgr.Config
+local function read_config(parser)
+	local user = type(parser) == "table" and parser.config or nil
+	if type(user) ~= "table" then
+		user = nil
+	end
 
--- T.416 13.1.8 defines modes 3/4 as direct CMY/CMYK colour. The Decoration
--- stores RGB, so convert those components. This assumes 8-bit components and
--- an ordinary CMY/CMYK interpretation; profile-specific CSID scaling and
--- offsets are not applied.
-local CONVERT_CMY_CMYK = true
+	local function option(key, default)
+		local value = user and user[key]
+		if type(value) == "boolean" then
+			return value
+		end
+		return default
+	end
+
+	return {
+		raw_c1 = option("raw_c1", DEFAULT_CONFIG.raw_c1),
+		legacy_rgb = option("legacy_rgb", DEFAULT_CONFIG.legacy_rgb),
+		mixed_sep = option("mixed_sep", DEFAULT_CONFIG.mixed_sep),
+		cmy_cmyk = option("cmy_cmyk", DEFAULT_CONFIG.cmy_cmyk),
+	}
+end
 
 -- ============================================================================
 -- Constants
@@ -132,10 +166,6 @@ local INTRODUCERS = {
 	"\\x{9B}",
 }
 
-if ACCEPT_RAW_C1_BYTE then
-	INTRODUCERS[#INTRODUCERS + 1] = char(0x9B)
-end
-
 --- Escape a literal string for use inside a Lua pattern.
 ---
 --- Executed only during module initialization.
@@ -146,21 +176,40 @@ local function escape_pattern(value)
 	return (value:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
 end
 
-local patterns = {}
-
 -- Pattern -> parameter start offset.
 --
 -- resolve() receives match.pattern through witch-colors.PatternMatch.
 -- This avoids scanning all introducers again for every match.
 local PARAM_START_BY_PATTERN = {}
 
-for i = 1, #INTRODUCERS do
-	local introducer = INTRODUCERS[i]
-	local pattern = escape_pattern(introducer) .. "[0-9;:]*m"
+--- Build the pattern list for the selected introducer set.
+---
+--- @param include_raw_c1 boolean
+--- @return string[]
+local function build_patterns(include_raw_c1)
+	local result = {}
 
-	patterns[i] = pattern
-	PARAM_START_BY_PATTERN[pattern] = #introducer + 1
+	for i = 1, #INTRODUCERS do
+		local introducer = INTRODUCERS[i]
+		local pattern = escape_pattern(introducer) .. "[0-9;:]*m"
+
+		result[i] = pattern
+		PARAM_START_BY_PATTERN[pattern] = #introducer + 1
+	end
+
+	if include_raw_c1 then
+		local introducer = char(0x9B)
+		local pattern = escape_pattern(introducer) .. "[0-9;:]*m"
+
+		result[#result + 1] = pattern
+		PARAM_START_BY_PATTERN[pattern] = #introducer + 1
+	end
+
+	return result
 end
+
+local PATTERNS = build_patterns(false)
+local PATTERNS_WITH_RAW_C1 = build_patterns(true)
 
 -- ============================================================================
 -- Palette
@@ -439,9 +488,10 @@ end
 --- @param index integer
 --- @param last integer
 --- @param mode integer
+--- @param options witch-colors.parsers.Sgr.Config
 --- @return integer|string|nil color
 --- @return integer next_index
-local function read_colon_fields(value, index, last, mode)
+local function read_colon_fields(value, index, last, mode, options)
 	local field_count = 0
 	local valid = true
 
@@ -587,7 +637,7 @@ local function read_colon_fields(value, index, last, mode)
 	if mode == 2 then
 		-- Optional non-standard shorthand, disabled by default:
 		-- R:G:B
-		if ALLOW_LEGACY_COLON_RGB and field_count == 3 then
+		if options.legacy_rgb and field_count == 3 then
 			if csid_rgb ~= nil and a ~= nil and b ~= nil then
 				return pack_rgb(csid_rgb, a, b), index
 			end
@@ -601,14 +651,14 @@ local function read_colon_fields(value, index, last, mode)
 
 	-- CMY.
 	if mode == 3 then
-		return CONVERT_CMY_CMYK
+		return options.cmy_cmyk
 			and direct_color(mode, a or 0, b or 0, c or 0)
 			or nil, index
 	end
 
 	-- CMYK.
 	if mode == 4 then
-		return CONVERT_CMY_CMYK
+		return options.cmy_cmyk
 			and direct_color(mode, a or 0, b or 0, c or 0, d or 0)
 			or nil, index
 	end
@@ -630,9 +680,10 @@ end
 --- @param value string
 --- @param index integer
 --- @param last integer
+--- @param options witch-colors.parsers.Sgr.Config
 --- @return integer|string|nil color
 --- @return integer next_index
-local function read_extended_color(value, index, last)
+local function read_extended_color(value, index, last, options)
 	local separator = byte(value, index)
 
 	if separator ~= COLON and separator ~= SEMICOLON then
@@ -659,16 +710,16 @@ local function read_extended_color(value, index, last)
 			return "NONE", index
 		end
 
-		return read_colon_fields(value, index, last, mode)
+		return read_colon_fields(value, index, last, mode, options)
 	end
 
 	-- Mixed xterm/ISO separators: 38;2:CSID:R:G:B.
 	if next_separator == COLON then
-		if not ALLOW_MIXED_SEPARATORS then
+		if not options.mixed_sep then
 			return nil, skip_to_semicolon(value, index, last)
 		end
 
-		return read_colon_fields(value, index, last, mode)
+		return read_colon_fields(value, index, last, mode, options)
 	end
 
 	-- xterm semicolon syntax.
@@ -765,10 +816,11 @@ end
 --- @param value string
 --- @param index integer
 --- @param last integer
+--- @param options witch-colors.parsers.Sgr.Config
 --- @return integer|string|nil fg
 --- @return integer|string|nil bg
 --- @return integer|string|nil sp
-local function find_colors(value, index, last)
+local function find_colors(value, index, last, options)
 	local fg, bg, sp
 
 	-- An empty SGR parameter list is equivalent to 0.
@@ -791,7 +843,7 @@ local function find_colors(value, index, last)
 
 		if param == 38 or param == 48 or param == 58 then
 			local color
-			color, index = read_extended_color(value, index, last)
+			color, index = read_extended_color(value, index, last, options)
 
 			if color ~= nil then
 				if param == 38 then
@@ -851,14 +903,19 @@ end
 
 ---@type witch-colors.Parser
 return {
-	pattern = patterns,
+	pattern = function(parser)
+		if read_config(parser).raw_c1 then
+			return PATTERNS_WITH_RAW_C1
+		end
+		return PATTERNS
+	end,
 
-	---@param _parser witch-colors.Parser
+	---@param parser witch-colors.Parser
 	---@param match witch-colors.PatternMatch
 	---@param _bufnr integer
 	---@param _row integer
-	---@return witch-colors.DecorationWithColor|nil
-	resolve = function(_parser, match, _bufnr, _row)
+	---@return witch-colors.SemanticColorDecoration|nil
+	resolve = function(parser, match, _bufnr, _row)
 		local value = match.value
 		local len = #value
 
@@ -873,7 +930,8 @@ return {
 			return nil
 		end
 
-		local fg, bg, sp = find_colors(value, param_start, len - 1)
+		local options = read_config(parser)
+		local fg, bg, sp = find_colors(value, param_start, len - 1, options)
 
 		if fg == nil and bg == nil and sp == nil then
 			return nil

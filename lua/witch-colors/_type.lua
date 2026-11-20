@@ -39,10 +39,10 @@
 --- @field ornament_side?   "left"|"right"
 
 
---- @class witch-colors.DecorationWithRow : witch-colors.Decoration
+--- @class witch-colors.RowDecoration : witch-colors.Decoration
 --- @field row integer 0-based buffer row.
 
---- @class witch-colors.DecorationWithColor : witch-colors.Decoration
+--- @class witch-colors.SemanticColorDecoration : witch-colors.Decoration
 --- Represents the mark's foreground or background color, depending on
 --- the config style (`"fg"` or `"bg"`). When specified, the mark ignores
 --- both the `fg` and `bg` fields.
@@ -99,7 +99,7 @@
 --- Called once per line. Returns nil when no marks are produced.
 --- `row` is a 0-based buffer row.
 --- This can be placed inside a lazy-loaded file.
---- @field parse? fun(parser: witch-colors.Parser, line: string, bufnr: integer, row: integer): witch-colors.DecorationWithColor[]|nil
+--- @field parse? fun(parser: witch-colors.Parser, line: string, bufnr: integer, row: integer): witch-colors.SemanticColorDecoration[]|nil
 ---
 --- Lua patterns used to find candidate color values in each line.
 --- This can be placed inside a lazy-loaded file.
@@ -109,7 +109,44 @@
 --- Called once per match. Returns nil if the value cannot be resolved.
 --- `row` is a 0-based buffer row.
 --- This can be placed inside a lazy-loaded file.
---- @field resolve? fun(parser: witch-colors.Parser, match: witch-colors.PatternMatch, bufnr: integer, row: integer): witch-colors.DecorationWithColor|nil
+--- @field resolve? fun(parser: witch-colors.Parser, match: witch-colors.PatternMatch, bufnr: integer, row: integer): witch-colors.SemanticColorDecoration|nil
+
+--- @class witch-colors.Provider
+---
+--- Must be defined in the source configuration, not in the lazily loaded module.
+--- Controls whether the provider is active for a buffer.
+--- @field enabled? boolean|fun(bufnr: integer): boolean|nil
+---
+--- Must be declared outside the lazy-loaded module.
+--- Determines processing order; lower values run first.
+--- @field priority? integer
+---
+--- Recommended configuration for the provider.
+---
+--- Unlike plugin configuration, this field is not automatically merged with
+--- the defaults. Users may replace or modify it through `Config.merge`, so
+--- its value or structure is not guaranteed to remain unchanged.
+---
+--- Always validate the configuration and every field before accessing them.
+--- Fall back to the corresponding default whenever a value is missing or
+--- invalid. Never assume the declared structure is preserved at runtime.
+--- @field config? table
+---
+--- The path to the module that contains the lazy fields.
+--- For example, `path = "witch-colors.providers.diagnostics"` will load
+--- `require("witch-colors.providers.diagnostics")`.
+--- @field path? string
+---
+--- Retrieves cached decorations for a buffer range.
+--- This callback runs synchronously during rendering.
+--- It must only read cached data and must not initiate asynchronous requests.
+---
+--- `first_row` is 0-based inclusive.
+--- `last_row` is 0-based exclusive.
+--- Every returned decoration must have a `row` within the requested range.
+--- Returns nil when no decorations are available.
+--- This can be placed inside a lazy-loaded file.
+--- @field provide? fun(provider: witch-colors.Provider, bufnr: integer, first_row: integer, last_row: integer): witch-colors.RowDecoration[]|nil
 
 --- Buffer exclusion rules. Any matching rule excludes the entire buffer.
 --- @class witch-colors.Config.Excluded

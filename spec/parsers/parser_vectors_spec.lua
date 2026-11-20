@@ -452,8 +452,28 @@ local function collect_matches(str, patterns)
     return matches, count
 end
 
+local function resolve_pattern(parser, input, row)
+    local pattern = parser.pattern
+    local pattern_type = type(pattern)
+
+    if pattern_type == "function" then
+        pattern = pattern(parser, input, BUFNR, row)
+        pattern_type = type(pattern)
+    end
+
+    if pattern_type == "string" then
+        return { pattern }
+    end
+
+    if pattern_type == "table" then
+        return pattern
+    end
+
+    return {}
+end
+
 local function resolve_decorations(parser, input, row)
-    local matches = collect_matches(input, parser.pattern)
+    local matches = collect_matches(input, resolve_pattern(parser, input, row))
     local decorations = {}
 
     for i = 1, #matches do
@@ -577,7 +597,12 @@ end)
 for _, parser_id in ipairs(PARSER_ORDER) do
     it(parser_id .. " exposes pattern", function()
         local parser = PARSERS[parser_id]
-        assert.is_true(type(parser.pattern) == "table", parser_id .. ": pattern must be a table")
-        assert.is_true(#parser.pattern > 0, parser_id .. ": pattern must not be empty")
+        local pattern_type = type(parser.pattern)
+
+        assert.is_true(pattern_type == "string" or pattern_type == "table" or pattern_type == "function",
+            parser_id .. ": pattern must be a string, table, or function")
+
+        local patterns = resolve_pattern(parser, "", 0)
+        assert.is_true(#patterns > 0, parser_id .. ": pattern must not be empty")
     end)
 end

@@ -370,7 +370,7 @@ end
 ---   1. The attribute mask.
 ---   2. The values of fg, bg, sp, and blend, when present.
 ---
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 --- @return vim.api.keyset.highlight|nil attrs
 --- @return string|nil cache_key
 local function resolve_highlight(mark)
@@ -445,7 +445,7 @@ local function resolve_highlight(mark)
 end
 
 --- Get or define a highlight group for the complete mark.
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 --- @return string|nil
 local function define_hl_group(mark)
     local attrs, key = resolve_highlight(mark)
@@ -469,7 +469,7 @@ end
 
 --- Draw a jewelry symbol as inline virtual text.
 --- @param bufnr integer
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 local function draw_ornament(bufnr, mark)
     local hl_group = define_hl_group(mark)
 
@@ -518,7 +518,7 @@ end
 
 --- Apply a highlight to the mark's byte range.
 --- @param bufnr integer
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 local function highlight_span(bufnr, mark)
     local hl_group = define_hl_group(mark)
     if not hl_group then return end
@@ -532,7 +532,7 @@ end
 
 --- Render a single normalized mark.
 --- @param bufnr integer
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 local function render_decoration(bufnr, mark)
     if mark.ornament and mark.ornament ~= "" then
         draw_ornament(bufnr, mark)
@@ -556,7 +556,7 @@ end
 
 --- Render a single mark.
 --- @param bufnr integer
---- @param mark witch-colors.DecorationWithRow
+--- @param mark witch-colors.RowDecoration
 function M.render(bufnr, mark)
     update_normal_bg()
     render_decoration(bufnr, mark)
@@ -564,7 +564,7 @@ end
 
 --- Render multiple marks, refreshing Normal only once.
 --- @param bufnr integer
---- @param marks witch-colors.DecorationWithRow[]
+--- @param marks witch-colors.RowDecoration[]
 function M.render_many(bufnr, marks)
     update_normal_bg()
 
