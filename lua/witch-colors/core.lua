@@ -298,12 +298,6 @@ local function render_range(bufnr, first_row, last_row, parsers, parser_count)
         return
     end
 
-    -- TODO: Include available providers in this early-return condition.
-    -- Providers should contribute cached decorations for this range only.
-    -- Async providers should invalidate rows through mark_dirty(), not
-    -- perform requests from inside this rendering function.
-
-    -- Fetch only the requested rows, not the entire buffer.
     local lines = api.nvim_buf_get_lines(bufnr, first_row, last_row, false)
     local decors
     local decor_count = 0
@@ -842,6 +836,7 @@ end
 function M.disable()
     if not state.enabled then return end
     state.enabled = false
+
     -- Pending defer_fn callbacks may still run, but their identity check
     -- will fail because the dirty table is replaced here.
     state.dirty = {}
